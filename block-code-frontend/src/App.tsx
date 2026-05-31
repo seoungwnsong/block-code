@@ -79,9 +79,27 @@ function App() {
 
   // This function is a placeholder for the backend integration 
   // that will check the flow of the blocks.
-  function checkFlow() {
-  console.log("Sending this data to backend:", { blocks });
-  setResult("Flow checked! Later this button will send data to backend.");
+async function checkFlow() {
+  try {
+    const response = await fetch("http://localhost:3000/check-flow", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ blocks }),
+    });
+
+    const data = await response.json();
+
+    console.log("Response from backend:", data);
+
+    setResult(
+      `Backend received ${data.blockCount} block(s). Status: ${data.status}`
+    );
+  } catch (error) {
+    console.error("Error connecting to backend:", error);
+    setResult("Error: Could not connect to backend.");
+  }
 }
   return (
     <div className="app">
