@@ -1,30 +1,17 @@
-const express = require('express');
-const cors = require('cors');        // add this
-const app = express();
+//Handle https:
 
-app.use(cors());                     // add this
+const express = require('express');
+const cors = require('cors');
+const { runBlocks } = require('./interpreter');
+
+const app = express();
+app.use(cors());
 app.use(express.json());
 
-class Expr_Num{
-    constructor(num){
-         this.n=num
-    }
-    evaluate(){
-        return this.n
-    } 
-    toString(){
-        return str(this.n)
-    }
-}
 app.post('/check-flow', (req, res) => {
     const blocks = req.body.blocks;
-    const env = {};
-    res.json({
-        status: 'received',
-        blockCount: blocks.length
-    });
+    const output = runBlocks(blocks);
+    res.json({ status: 'done', ...output });
 });
 
-app.listen(3000, () => {
-    console.log('Server running on http://localhost:3000');
-});
+app.listen(3000, () => console.log('Server running on http://localhost:3000'));
