@@ -26,18 +26,81 @@ type Block =
       left: string;
       operator: LogicOperator;
       right: string;
+    }
+  | {
+      id: number;
+      type: "print";
+      value: string;
+    }
+  | {
+      id: number;
+      type: "if";
+      condition: string;
+      children: Block[];
+    }
+  | {
+      id: number;
+      type: "while";
+      condition: string;
+      children: Block[];
+    }
+  | {
+      id: number;
+      type: "for";
+      variable: string;
+      start: string;
+      end: string;
+      children: Block[];
+    }
+  | {
+      id: number;
+      type: "tryCatch";
+      catchErrorName: string;
+      tryChildren: Block[];
+      catchChildren: Block[];
     };
 
 type BlockType = Block["type"];
+
+type DropTarget =
+  | {
+      area: "root";
+      index: number;
+    }
+  | {
+      area: "children";
+      parentId: number;
+      index: number;
+    }
+  | {
+      area: "tryChildren";
+      parentId: number;
+      index: number;
+    }
+  | {
+      area: "catchChildren";
+      parentId: number;
+      index: number;
+    };
 
 function App() {
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [result, setResult] = useState("");
   const [zoom, setZoom] = useState(1);
-  const [activeDropIndex, setActiveDropIndex] = useState<number | null>(null);
+  const [activeDropTarget, setActiveDropTarget] = useState<string | null>(null);
+
+  function makeId() {
+    return Date.now() + Math.floor(Math.random() * 1000);
+  }
+
+  function getInputWidth(value: string, minWidth = 72, maxWidth = 240) {
+    const textLength = value.length === 0 ? 4 : value.length;
+    const calculatedWidth = textLength * 8 + 18;
+    return Math.min(Math.max(minWidth, calculatedWidth), maxWidth);
+  }
 
   function createBlock(type: BlockType): Block {
-    const id = Date.now() + Math.floor(Math.random() * 1000);
+    const id = makeId();
 
     if (type === "variable") {
       return {
@@ -59,49 +122,230 @@ function App() {
       };
     }
 
+    if (type === "logic") {
+      return {
+        id,
+        type: "logic",
+        left: "",
+        operator: "==",
+        right: "",
+      };
+    }
+
+    if (type === "print") {
+      return {
+        id,
+        type: "print",
+        value: "",
+      };
+    }
+
+    if (type === "if") {
+      return {
+        id,
+        type: "if",
+        condition: "",
+        children: [],
+      };
+    }
+
+    if (type === "while") {
+      return {
+        id,
+        type: "while",
+        condition: "",
+        children: [],
+      };
+    }
+
+    if (type === "for") {
+      return {
+        id,
+        type: "for",
+        variable: "i",
+        start: "0",
+        end: "10",
+        children: [],
+      };
+    }
+
     return {
       id,
-      type: "logic",
-      left: "",
-      operator: "==",
-      right: "",
+      type: "tryCatch",
+      catchErrorName: "error",
+      tryChildren: [],
+      catchChildren: [],
     };
   }
 
-  function addBlock(type: BlockType) {
-    setBlocks((prev) => [...prev, createBlock(type)]);
+  function getDropTargetKey(target: DropTarget) {
+    if (target.area === "root") {
+      return `root-${target.index}`;
+    }
+
+    return `${target.area}-${target.parentId}-${target.index}`;
   }
 
-  function insertBlockAtIndex(newBlock: Block, index: number) {
-    setBlocks((prev) => {
-      const updated = [...prev];
-      updated.splice(index, 0, newBlock);
+  function insertIntoBlocks(
+    blockList: Block[],
+    target: DropTarget,
+    newBlock: Block
+  ): Block[] {
+    if (target.area === "root") {
+      const updated = [...blockList];
+      updated.splice(target.index, 0, newBlock);
       return updated;
+    }
+
+    return blockList.map((block) => {
+      if (block.id === target.parentId) {
+        if (
+          target.area === "children" &&
+          (block.type === "if" ||
+            block.type === "while" ||
+            block.type === "for")
+        ) {
+          const updatedChildren = [...block.children];
+          updatedChildren.splice(target.index, 0, newBlock);
+
+          return {
+            ...block,
+            children: updatedChildren,
+          };
+        }
+
+        if (target.area === "tryChildren" && block.type === "tryCatch") {
+          const updatedTryChildren = [...block.tryChildren];
+          updatedTryChildren.splice(target.index, 0, newBlock);
+
+          return {
+            ...block,
+            tryChildren: updatedTryChildren,
+          };
+        }
+
+        if (target.area === "catchChildren" && block.type === "tryCatch") {
+          const updatedCatchChildren = [...block.catchChildren];
+          updatedCatchChildren.splice(target.index, 0, newBlock);
+
+          return {
+            ...block,
+            catchChildren: updatedCatchChildren,
+          };
+        }
+      }
+
+      if (block.type === "if" || block.type === "while" || block.type === "for") {
+        return {
+          ...block,
+          children: insertIntoBlocks(block.children, target, newBlock),
+        };
+      }
+
+      if (block.type === "tryCatch") {
+        return {
+          ...block,
+          tryChildren: insertIntoBlocks(block.tryChildren, target, newBlock),
+          catchChildren: insertIntoBlocks(block.catchChildren, target, newBlock),
+        };
+      }
+
+      return block;
     });
   }
 
-  function moveBlockToIndex(blockId: number, targetIndex: number) {
-    setBlocks((prev) => {
-      const oldIndex = prev.findIndex((block) => block.id === blockId);
+  function removeBlockById(
+    blockList: Block[],
+    id: number
+  ): { updatedBlocks: Block[]; removedBlock: Block | null } {
+    let removedBlock: Block | null = null;
 
-      if (oldIndex === -1) {
-        return prev;
+    const updatedBlocks = blockList
+      .map((block) => {
+        if (block.id === id) {
+          removedBlock = block;
+          return null;
+        }
+
+        if (block.type === "if" || block.type === "while" || block.type === "for") {
+          const result = removeBlockById(block.children, id);
+
+          if (result.removedBlock) {
+            removedBlock = result.removedBlock;
+          }
+
+          return {
+            ...block,
+            children: result.updatedBlocks,
+          };
+        }
+
+        if (block.type === "tryCatch") {
+          const tryResult = removeBlockById(block.tryChildren, id);
+          const catchResult = removeBlockById(block.catchChildren, id);
+
+          if (tryResult.removedBlock) {
+            removedBlock = tryResult.removedBlock;
+          }
+
+          if (catchResult.removedBlock) {
+            removedBlock = catchResult.removedBlock;
+          }
+
+          return {
+            ...block,
+            tryChildren: tryResult.updatedBlocks,
+            catchChildren: catchResult.updatedBlocks,
+          };
+        }
+
+        return block;
+      })
+      .filter((block): block is Block => block !== null);
+
+    return { updatedBlocks, removedBlock };
+  }
+
+  function blockContainsId(block: Block, id: number): boolean {
+    if (block.id === id) {
+      return true;
+    }
+
+    if (block.type === "if" || block.type === "while" || block.type === "for") {
+      return block.children.some((child) => blockContainsId(child, id));
+    }
+
+    if (block.type === "tryCatch") {
+      return (
+        block.tryChildren.some((child) => blockContainsId(child, id)) ||
+        block.catchChildren.some((child) => blockContainsId(child, id))
+      );
+    }
+
+    return false;
+  }
+
+  function findBlockById(blockList: Block[], id: number): Block | null {
+    for (const block of blockList) {
+      if (block.id === id) {
+        return block;
       }
 
-      const movingBlock = prev[oldIndex];
-      const withoutMovingBlock = prev.filter((block) => block.id !== blockId);
-
-      let adjustedIndex = targetIndex;
-
-      if (oldIndex < targetIndex) {
-        adjustedIndex = targetIndex - 1;
+      if (block.type === "if" || block.type === "while" || block.type === "for") {
+        const found = findBlockById(block.children, id);
+        if (found) return found;
       }
 
-      const updated = [...withoutMovingBlock];
-      updated.splice(adjustedIndex, 0, movingBlock);
+      if (block.type === "tryCatch") {
+        const foundInTry = findBlockById(block.tryChildren, id);
+        if (foundInTry) return foundInTry;
 
-      return updated;
-    });
+        const foundInCatch = findBlockById(block.catchChildren, id);
+        if (foundInCatch) return foundInCatch;
+      }
+    }
+
+    return null;
   }
 
   function handleTemplateDragStart(
@@ -117,15 +361,13 @@ function App() {
     event: React.DragEvent<HTMLDivElement>,
     id: number
   ) {
+    event.stopPropagation();
     event.dataTransfer.setData("source", "workspace");
     event.dataTransfer.setData("blockId", String(id));
     event.dataTransfer.effectAllowed = "move";
   }
 
-  function handleDropAtIndex(
-    event: React.DragEvent<HTMLElement>,
-    index: number
-  ) {
+  function handleDrop(event: React.DragEvent<HTMLElement>, target: DropTarget) {
     event.preventDefault();
     event.stopPropagation();
 
@@ -135,7 +377,8 @@ function App() {
       const blockType = event.dataTransfer.getData("blockType") as BlockType;
 
       if (blockType) {
-        insertBlockAtIndex(createBlock(blockType), index);
+        const newBlock = createBlock(blockType);
+        setBlocks((prev) => insertIntoBlocks(prev, target, newBlock));
       }
     }
 
@@ -143,59 +386,86 @@ function App() {
       const blockId = Number(event.dataTransfer.getData("blockId"));
 
       if (!Number.isNaN(blockId)) {
-        moveBlockToIndex(blockId, index);
+        const movingBlock = findBlockById(blocks, blockId);
+
+        if (!movingBlock) {
+          return;
+        }
+
+        if ("parentId" in target && blockContainsId(movingBlock, target.parentId)) {
+          setActiveDropTarget(null);
+          return;
+        }
+
+        const removeResult = removeBlockById(blocks, blockId);
+
+        if (removeResult.removedBlock) {
+          const updated = insertIntoBlocks(
+            removeResult.updatedBlocks,
+            target,
+            removeResult.removedBlock
+          );
+
+          setBlocks(updated);
+        }
       }
     }
 
-    setActiveDropIndex(null);
+    setActiveDropTarget(null);
   }
 
-  function handleDropAtEnd(event: React.DragEvent<HTMLDivElement>) {
-    event.preventDefault();
-
-    const index = activeDropIndex ?? blocks.length;
-    handleDropAtIndex(event, index);
-  }
-
-  function handleBlockDragOver(
-    event: React.DragEvent<HTMLDivElement>,
-    index: number
+  function handleDropZoneDragOver(
+    event: React.DragEvent<HTMLElement>,
+    target: DropTarget
   ) {
     event.preventDefault();
-
-    const rect = event.currentTarget.getBoundingClientRect();
-    const mouseY = event.clientY;
-    const middleY = rect.top + rect.height / 2;
-
-    if (mouseY < middleY) {
-      setActiveDropIndex(index);
-    } else {
-      setActiveDropIndex(index + 1);
-    }
-  }
-
-  function handleWorkspaceDragOver(event: React.DragEvent<HTMLDivElement>) {
-    event.preventDefault();
-
-    if (blocks.length === 0) {
-      setActiveDropIndex(0);
-    }
+    event.stopPropagation();
+    setActiveDropTarget(getDropTargetKey(target));
   }
 
   function handleDragEnd() {
-    setActiveDropIndex(null);
+    setActiveDropTarget(null);
+  }
+
+  function addBlock(type: BlockType) {
+    setBlocks((prev) => [...prev, createBlock(type)]);
   }
 
   function deleteBlock(id: number) {
-    setBlocks((prev) => prev.filter((block) => block.id !== id));
+    const result = removeBlockById(blocks, id);
+    setBlocks(result.updatedBlocks);
   }
 
   function updateBlock(id: number, field: string, value: string) {
-    setBlocks((prev) =>
-      prev.map((block) =>
-        block.id === id ? ({ ...block, [field]: value } as Block) : block
-      )
-    );
+    function update(blockList: Block[]): Block[] {
+      return blockList.map((block) => {
+        if (block.id === id) {
+          return {
+            ...block,
+            [field]: value,
+          } as Block;
+        }
+
+        if (block.type === "if" || block.type === "while" || block.type === "for") {
+          return {
+            ...block,
+            children: update(block.children),
+          };
+        }
+
+        if (block.type === "tryCatch") {
+          return {
+            ...block,
+            tryChildren: update(block.tryChildren),
+            catchChildren: update(block.catchChildren),
+          };
+        }
+
+        return block;
+      });
+    }
+
+    setBlocks((prev) => update(prev));
   }
 
   function zoomIn() {
@@ -245,19 +515,321 @@ function App() {
     );
   }
 
-  function renderDropZone(index: number) {
+  function renderDropZone(target: DropTarget) {
+    const key = getDropTargetKey(target);
+
     return (
       <div
         className={`insert-drop-zone ${
-          activeDropIndex === index ? "active-insert-zone" : ""
+          activeDropTarget === key ? "active-insert-zone" : ""
         }`}
-        onDragOver={(event) => {
-          event.preventDefault();
-          setActiveDropIndex(index);
-        }}
-        onDrop={(event) => handleDropAtIndex(event, index)}
+        onDragOver={(event) => handleDropZoneDragOver(event, target)}
+        onDrop={(event) => handleDrop(event, target)}
       >
-        {activeDropIndex === index && <span>Drop here</span>}
+        {activeDropTarget === key && <span>Drop here</span>}
+      </div>
+    );
+  }
+
+  function renderNestedArea(
+    blockList: Block[],
+    area: "children" | "tryChildren" | "catchChildren",
+    parentId: number
+  ) {
+    const endTarget: DropTarget = {
+      area,
+      parentId,
+      index: blockList.length,
+    };
+
+    return (
+      <div
+        className={`nested-area ${
+          activeDropTarget === getDropTargetKey(endTarget)
+            ? "active-nested-area"
+            : ""
+        }`}
+        onDragOver={(event) => handleDropZoneDragOver(event, endTarget)}
+        onDrop={(event) => handleDrop(event, endTarget)}
+      >
+        {blockList.length === 0 && (
+          <div className="nested-placeholder">Drop blocks here</div>
+        )}
+
+        {renderBlockList(blockList, area, parentId)}
+      </div>
+    );
+  }
+
+  function renderBlockList(
+    blockList: Block[],
+    area: DropTarget["area"],
+    parentId?: number
+  ) {
+    return (
+      <>
+        {renderDropZone(
+          area === "root"
+            ? { area: "root", index: 0 }
+            : { area, parentId: parentId as number, index: 0 }
+        )}
+
+        {blockList.map((block, index) => (
+          <div key={block.id} className="block-wrapper">
+            {renderBlock(block)}
+
+            {renderDropZone(
+              area === "root"
+                ? { area: "root", index: index + 1 }
+                : {
+                    area,
+                    parentId: parentId as number,
+                    index: index + 1,
+                  }
+            )}
+          </div>
+        ))}
+      </>
+    );
+  }
+
+  function isContainerBlock(block: Block) {
+    return (
+      block.type === "if" ||
+      block.type === "while" ||
+      block.type === "for" ||
+      block.type === "tryCatch"
+    );
+  }
+
+  function renderBlock(block: Block) {
+    return (
+      <div
+        className={`scratch-block ${block.type}-block ${
+          isContainerBlock(block) ? "container-block" : ""
+        }`}
+        draggable
+        onDragStart={(event) => handleWorkspaceBlockDragStart(event, block.id)}
+        onDragEnd={handleDragEnd}
+      >
+        <button className="delete-button" onClick={() => deleteBlock(block.id)}>
+          ×
+        </button>
+
+        {block.type === "variable" && (
+          <div className="block-row">
+            <select
+              value={block.dataType}
+              onChange={(event) =>
+                updateBlock(block.id, "dataType", event.target.value)
+              }
+            >
+              <option value="int">int</option>
+              <option value="float">float</option>
+              <option value="bool">bool</option>
+              <option value="string">string</option>
+            </select>
+
+            <input
+              placeholder="name"
+              value={block.name}
+              style={{ width: getInputWidth(block.name) }}
+              onChange={(event) => updateBlock(block.id, "name", event.target.value)}
+            />
+
+            <span>=</span>
+
+            <input
+              placeholder="value"
+              value={block.value}
+              style={{ width: getInputWidth(block.value) }}
+              onChange={(event) =>
+                updateBlock(block.id, "value", event.target.value)
+              }
+            />
+          </div>
+        )}
+
+        {block.type === "calculation" && (
+          <div className="block-row">
+            <input
+              placeholder="left"
+              value={block.left}
+              style={{ width: getInputWidth(block.left) }}
+              onChange={(event) => updateBlock(block.id, "left", event.target.value)}
+            />
+
+            <select
+              value={block.operator}
+              onChange={(event) =>
+                updateBlock(block.id, "operator", event.target.value)
+              }
+            >
+              <option value="+">+</option>
+              <option value="-">−</option>
+              <option value="*">×</option>
+              <option value="/">÷</option>
+              <option value="%">%</option>
+            </select>
+
+            <input
+              placeholder="right"
+              value={block.right}
+              style={{ width: getInputWidth(block.right) }}
+              onChange={(event) =>
+                updateBlock(block.id, "right", event.target.value)
+              }
+            />
+          </div>
+        )}
+
+        {block.type === "logic" && (
+          <div className="block-row">
+            <input
+              placeholder="left"
+              value={block.left}
+              style={{ width: getInputWidth(block.left) }}
+              onChange={(event) => updateBlock(block.id, "left", event.target.value)}
+            />
+
+            <select
+              value={block.operator}
+              onChange={(event) =>
+                updateBlock(block.id, "operator", event.target.value)
+              }
+            >
+              <option value="==">==</option>
+              <option value="!=">!=</option>
+              <option value=">">&gt;</option>
+              <option value="<">&lt;</option>
+              <option value=">=">&gt;=</option>
+              <option value="<=">&lt;=</option>
+              <option value="and">and</option>
+              <option value="or">or</option>
+            </select>
+
+            <input
+              placeholder="right"
+              value={block.right}
+              style={{ width: getInputWidth(block.right) }}
+              onChange={(event) =>
+                updateBlock(block.id, "right", event.target.value)
+              }
+            />
+          </div>
+        )}
+
+        {block.type === "print" && (
+          <div className="block-row">
+            <span>print</span>
+            <input
+              placeholder="value"
+              value={block.value}
+              style={{ width: getInputWidth(block.value) }}
+              onChange={(event) =>
+                updateBlock(block.id, "value", event.target.value)
+              }
+            />
+          </div>
+        )}
+
+        {block.type === "if" && (
+          <>
+            <div className="block-row">
+              <span>if</span>
+              <input
+                className="condition-input"
+                placeholder="condition"
+                value={block.condition}
+                style={{ width: getInputWidth(block.condition, 150, 340) }}
+                onChange={(event) =>
+                  updateBlock(block.id, "condition", event.target.value)
+                }
+              />
+            </div>
+
+            {renderNestedArea(block.children, "children", block.id)}
+          </>
+        )}
+
+        {block.type === "while" && (
+          <>
+            <div className="block-row">
+              <span>while</span>
+              <input
+                className="condition-input"
+                placeholder="condition"
+                value={block.condition}
+                style={{ width: getInputWidth(block.condition, 150, 340) }}
+                onChange={(event) =>
+                  updateBlock(block.id, "condition", event.target.value)
+                }
+              />
+            </div>
+
+            {renderNestedArea(block.children, "children", block.id)}
+          </>
+        )}
+
+        {block.type === "for" && (
+          <>
+            <div className="block-row">
+              <span>for</span>
+              <input
+                placeholder="i"
+                value={block.variable}
+                style={{ width: getInputWidth(block.variable) }}
+                onChange={(event) =>
+                  updateBlock(block.id, "variable", event.target.value)
+                }
+              />
+              <span>from</span>
+              <input
+                placeholder="0"
+                value={block.start}
+                style={{ width: getInputWidth(block.start) }}
+                onChange={(event) =>
+                  updateBlock(block.id, "start", event.target.value)
+                }
+              />
+              <span>to</span>
+              <input
+                placeholder="10"
+                value={block.end}
+                style={{ width: getInputWidth(block.end) }}
+                onChange={(event) =>
+                  updateBlock(block.id, "end", event.target.value)
+                }
+              />
+            </div>
+
+            {renderNestedArea(block.children, "children", block.id)}
+          </>
+        )}
+
+        {block.type === "tryCatch" && (
+          <>
+            <div className="block-row">
+              <span>try</span>
+            </div>
+
+            {renderNestedArea(block.tryChildren, "tryChildren", block.id)}
+
+            <div className="catch-row">
+              <span>catch</span>
+              <input
+                placeholder="error"
+                value={block.catchErrorName}
+                style={{ width: getInputWidth(block.catchErrorName) }}
+                onChange={(event) =>
+                  updateBlock(block.id, "catchErrorName", event.target.value)
+                }
+              />
+            </div>
+
+            {renderNestedArea(block.catchChildren, "catchChildren", block.id)}
+          </>
+        )}
       </div>
     );
   }
@@ -282,14 +854,29 @@ function App() {
           {renderPaletteBlock("logic", "logic", "logic-template")}
         </section>
 
-        <p className="hint-text">Drag into a gap, or click to add.</p>
+        <section className="block-section">
+          <h3>Control Flow</h3>
+          {renderPaletteBlock("if", "if", "control-template")}
+          {renderPaletteBlock("for", "for", "control-template")}
+          {renderPaletteBlock("while", "while", "control-template")}
+        </section>
+
+        <section className="block-section">
+          <h3>Error Handling</h3>
+          {renderPaletteBlock("try/catch", "tryCatch", "try-template")}
+        </section>
+
+        <section className="block-section">
+          <h3>Output</h3>
+          {renderPaletteBlock("print", "print", "print-template")}
+        </section>
       </aside>
 
       <main className="workspace-area">
         <div className="workspace-toolbar">
           <div>
             <h2>Workspace</h2>
-            <p>Drop blocks between other blocks to insert them.</p>
+            <p>Drop blocks into the main area or inside container blocks.</p>
           </div>
 
           <div className="zoom-controls">
@@ -302,8 +889,13 @@ function App() {
 
         <div
           className="drop-zone"
-          onDragOver={handleWorkspaceDragOver}
-          onDrop={handleDropAtEnd}
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) =>
+            handleDrop(event, {
+              area: "root",
+              index: blocks.length,
+            })
+          }
         >
           {blocks.length === 0 && (
             <div className="empty-message">Drag a block here</div>
@@ -315,148 +907,25 @@ function App() {
               transform: `scale(${zoom})`,
             }}
           >
-            {renderDropZone(0)}
-
-            {blocks.map((block, index) => (
-              <div
-                key={block.id}
-                className="block-wrapper"
-                onDragOver={(event) => handleBlockDragOver(event, index)}
-                onDrop={(event) =>
-                  handleDropAtIndex(event, activeDropIndex ?? index + 1)
-                }
-              >
-                <div
-                  className={`scratch-block ${block.type}-block`}
-                  draggable
-                  onDragStart={(event) =>
-                    handleWorkspaceBlockDragStart(event, block.id)
-                  }
-                  onDragEnd={handleDragEnd}
-                >
-                  <button
-                    className="delete-button"
-                    onClick={() => deleteBlock(block.id)}
-                  >
-                    ×
-                  </button>
-
-                  {block.type === "variable" && (
-                    <div className="block-row">
-                      <select
-                        value={block.dataType}
-                        onChange={(event) =>
-                          updateBlock(block.id, "dataType", event.target.value)
-                        }
-                      >
-                        <option value="int">int</option>
-                        <option value="float">float</option>
-                        <option value="bool">bool</option>
-                        <option value="string">string</option>
-                      </select>
-
-                      <input
-                        placeholder="name"
-                        value={block.name}
-                        onChange={(event) =>
-                          updateBlock(block.id, "name", event.target.value)
-                        }
-                      />
-
-                      <span>=</span>
-
-                      <input
-                        placeholder="value"
-                        value={block.value}
-                        onChange={(event) =>
-                          updateBlock(block.id, "value", event.target.value)
-                        }
-                      />
-                    </div>
-                  )}
-
-                  {block.type === "calculation" && (
-                    <div className="block-row">
-                      <input
-                        placeholder="left"
-                        value={block.left}
-                        onChange={(event) =>
-                          updateBlock(block.id, "left", event.target.value)
-                        }
-                      />
-
-                      <select
-                        value={block.operator}
-                        onChange={(event) =>
-                          updateBlock(block.id, "operator", event.target.value)
-                        }
-                      >
-                        <option value="+">+</option>
-                        <option value="-">−</option>
-                        <option value="*">×</option>
-                        <option value="/">÷</option>
-                        <option value="%">%</option>
-                      </select>
-
-                      <input
-                        placeholder="right"
-                        value={block.right}
-                        onChange={(event) =>
-                          updateBlock(block.id, "right", event.target.value)
-                        }
-                      />
-                    </div>
-                  )}
-
-                  {block.type === "logic" && (
-                    <div className="block-row">
-                      <input
-                        placeholder="left"
-                        value={block.left}
-                        onChange={(event) =>
-                          updateBlock(block.id, "left", event.target.value)
-                        }
-                      />
-
-                      <select
-                        value={block.operator}
-                        onChange={(event) =>
-                          updateBlock(block.id, "operator", event.target.value)
-                        }
-                      >
-                        <option value="==">==</option>
-                        <option value="!=">!=</option>
-                        <option value=">">&gt;</option>
-                        <option value="<">&lt;</option>
-                        <option value=">=">&gt;=</option>
-                        <option value="<=">&lt;=</option>
-                        <option value="and">and</option>
-                        <option value="or">or</option>
-                      </select>
-
-                      <input
-                        placeholder="right"
-                        value={block.right}
-                        onChange={(event) =>
-                          updateBlock(block.id, "right", event.target.value)
-                        }
-                      />
-                    </div>
-                  )}
-                </div>
-
-                {renderDropZone(index + 1)}
-              </div>
-            ))}
+            {renderBlockList(blocks, "root")}
           </div>
         </div>
       </main>
 
       <aside className="output-panel">
         <h2>Output</h2>
-
-        <button className="check-button" onClick={checkFlow}>
-          Check Flow
+        
+        <button className="run-button" onClick={checkFlow}>
+          <svg
+            className="run-icon"
+            viewBox="0 0 24 24"
+            width="16"
+            height="16"
+            aria-hidden="true"
+          >
+            <path d="M8 5V19L19 12L8 5Z" />
+          </svg>
+          <span>Run</span>
         </button>
 
         {result && <p className="result-message">{result}</p>}
