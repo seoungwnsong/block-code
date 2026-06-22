@@ -1,45 +1,32 @@
-export class Expr
-//Fake abstract class represent a python expression
-{
-     evaluate()
-    {
-
-    }
+class Expr {
+    evaluate() {}
 }
 
-export class num extends Expr{
-    constructor(number){
+class num extends Expr {
+    constructor(number) {
+        super();
         this.value = number;
     }
-    evaluate(){
-        return this.value;
-    }
-    toString(){
-        return `${this.value}`;
-    }
-} 
+    evaluate() { return this.value; }
+    toString() { return `${this.value}`; }
+}
 
-export class Booleans extends Expr{
-    constructor(value){
+class Booleans extends Expr {
+    constructor(value) {
+        super();
         this.value = value;
     }
-    evaluate(){
-        return this.value;
-    }
-    toString(){
-        return `${this.value}`;
-    }
-
+    evaluate() { return this.value; }
+    toString() { return `${this.value}`; }
 }
-export class Strings extends ExprP{
-    constructor(text){
+
+class Strings extends Expr {
+    constructor(text) {
+        super();
         this.value = text;
     }
-    evaluate(){
-        return this.toString();
-    }
-    toString(){
-        return this.value;
-    }
+    evaluate() { return this.value; }
+    toString() { return this.value; }
 }
 
+module.exports = { Expr, num, Booleans, Strings };
