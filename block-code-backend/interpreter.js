@@ -50,6 +50,10 @@ function toExpr(block) {
             return new BinaryOperator(toExpr(block.left), block.operator, toExpr(block.right));
             
         case 'logic':
+            if (block.operator === 'and' || block.operator === 'or') {
+                return new BoolOp(block.operator, [toExpr(block.left), toExpr(block.right)]);
+            }
+        
             return new Compare(toExpr(block.left), [[block.operator, toExpr(block.right)]]);
             
         case 'compare':
