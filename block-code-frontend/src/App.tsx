@@ -489,15 +489,28 @@ function App() {
         },
         body: JSON.stringify({ blocks }),
       });
-
+  
       const data = await response.json();
-
-      setResult(
-        `Backend received ${data.blockCount} block(s). Status: ${data.status}`
-      );
+  
+      if (!response.ok) {
+        setResult(`Server Error: ${data.error || "Something went wrong."}`);
+        return;
+      }
+  
+      if (data.status === "error" || data.error) {
+        setResult(`Runtime Error: ${data.error || "Program could not run."}`);
+        return;
+      }
+  
+      if (Array.isArray(data.output) && data.output.length > 0) {
+        setResult(data.output.join("\n"));
+        return;
+      }
+  
+      setResult("Program finished with no output.");
     } catch (error) {
       console.error(error);
-      setResult("Error: Could not connect to backend.");
+      setResult("Connection Error: Could not connect to backend.");
     }
   }
 
