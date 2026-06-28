@@ -2,22 +2,36 @@ const { Assign, ParallelAssign, Print, If, ForRange, For, While, TaC } = require
 const { BinaryOperator, Compare, Bool, BoolOp } = require('./operations');
 const { num, Booleans, Strings } = require('./permitivedatatypes');
 
-// Turns a block into an Expr node — works recursively for composed expressions
 function toExpr(block) {
+    if (block === null || block === undefined) {
+        throw new Error(`Expression block is null or undefined`);
+    }
+
     if (typeof block === 'number') return new num(block);
+
     if (typeof block === 'string') {
-        const n = Number(block);
-        return isNaN(n) ? new Strings(block) : new num(n);
+        // Has surrounding quotes → string literal
+        if (block.startsWith("'") && block.endsWith("'")) {
+            return new Strings(block.slice(1, -1));
+        }
+        // Pure number → numeric literal
+        if (!isNaN(Number(block)) && block.trim() !== '') {
+            return block.includes('.') ? new num(parseFloat(block)) : new num(parseInt(block, 10));
+        }
+        // Otherwise → variable lookup
+        return { evaluate: (env) => {
+            if (!(block in env)) throw new Error(`Undefined variable: ${block}`);
+            return env[block];
+        }};
     }
 
     switch (block.type) {
-        case 'int':    return new num(Number(block.value));
-        case 'float':  return new num(Number(block.value));
-        case 'str':    return new Strings(block.value);
+        case 'int':    return new num(parseInt(block.value, 10));
+        case 'float':  return new num(parseFloat(block.value));
+        case 'str':    return new Strings(String(block.value));
         case 'bool':   return new Booleans(block.value === 'true' || block.value === true);
 
         case 'variable':
-            // Read the variable's value from env at runtime
             return { evaluate: (env) => {
                 if (!(block.name in env)) throw new Error(`Undefined variable: ${block.name}`);
                 return env[block.name];
@@ -27,26 +41,22 @@ function toExpr(block) {
             return new BinaryOperator(toExpr(block.left), block.operator, toExpr(block.right));
 
         case 'compare':
-            // Supports chained: { left, comparisons: [{op, right}, ...] }
-            // or simple:        { left, operator, right }
             return block.comparisons
                 ? new Compare(toExpr(block.left), block.comparisons.map(c => [c.op, toExpr(c.right)]))
                 : new Compare(toExpr(block.left), [[block.operator, toExpr(block.right)]]);
 
         case 'boolop':
-            // Recursive: each value in block.values can itself be a composed expression
             return new BoolOp(block.operator, block.values.map(toExpr));
 
         default:
-            // Inline literal with dataType field
-            if (block.dataType === 'int' || block.dataType === 'float') return new num(Number(block.value));
-            if (block.dataType === 'str')  return new Strings(String(block.value));
-            if (block.dataType === 'bool') return new Booleans(block.value === 'true' || block.value === true);
-            throw new Error(`Unknown expression block: "${block.type}"`);
+            if (block.dataType === 'int')   return new num(parseInt(block.value, 10));
+            if (block.dataType === 'float') return new num(parseFloat(block.value));
+            if (block.dataType === 'str')   return new Strings(String(block.value));
+            if (block.dataType === 'bool')  return new Booleans(block.value === 'true' || block.value === true);
+            throw new Error(`Unknown expression block type: "${block.type}"`);
     }
 }
 
-// Turns a block into a Statement node
 function toStmt(block) {
     switch (block.type) {
         case 'variable':     return new Assign(block.name, toExpr({ type: block.dataType, value: block.value }));
