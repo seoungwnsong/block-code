@@ -11,23 +11,75 @@ class BinaryOperator extends Expr {
         const left = this.left.evaluate(env);
         const right = this.right.evaluate(env);
         switch (this.op) {
-            case "+":   return left + right;
-            case "-":   return left - right;
-            case "*":   return left * right;
+            case "+":
+                if (typeof left === "number" && typeof right === "number") {
+                    return left + right;
+                }
+        
+                if (typeof left === "string" && typeof right === "string") {
+                    return left + right;
+                }
+        
+                throw new TypeError(
+                    `Cannot add ${typeof left} and ${typeof right}`
+                );
+        
+            case "-":
+            case "*":
             case "/":
-                if (right === 0) throw new Error("Division by zero");
-                return left / right;
-            case "%":   return left % right;
-            case "**":  return left ** right;
-            case "and": return left && right;
-            case "or":  return left || right;
-            case "==":  return left === right;
-            case "!=":  return left !== right;
-            case "<":   return left < right;
-            case ">":   return left > right;
-            case "<=":  return left <= right;
-            case ">=":  return left >= right;
-            default:    throw new Error(`Unknown operator: ${this.op}`);
+            case "%":
+            case "**":
+                if (typeof left !== "number" || typeof right !== "number") {
+                    throw new TypeError(
+                        `Operator ${this.op} requires numbers, got ${typeof left} and ${typeof right}`
+                    );
+                }
+        
+                if (this.op === "/" && right === 0) {
+                    throw new Error("Division by zero");
+                }
+        
+                if (this.op === "-") return left - right;
+                if (this.op === "*") return left * right;
+                if (this.op === "/") return left / right;
+                if (this.op === "%") return left % right;
+                if (this.op === "**") return left ** right;
+                break;
+        
+            case "and":
+            case "or":
+                if (typeof left !== "boolean" || typeof right !== "boolean") {
+                    throw new TypeError(
+                        `Operator ${this.op} requires booleans, got ${typeof left} and ${typeof right}`
+                    );
+                }
+        
+                return this.op === "and" ? left && right : left || right;
+        
+            case "==":
+                return left === right;
+        
+            case "!=":
+                return left !== right;
+        
+            case "<":
+            case ">":
+            case "<=":
+            case ">=":
+                if (typeof left !== typeof right) {
+                    throw new TypeError(
+                        `Cannot compare ${typeof left} and ${typeof right}`
+                    );
+                }
+        
+                if (this.op === "<") return left < right;
+                if (this.op === ">") return left > right;
+                if (this.op === "<=") return left <= right;
+                if (this.op === ">=") return left >= right;
+                break;
+        
+            default:
+                throw new Error(`Unknown operator: ${this.op}`);
         }
     }
 }
