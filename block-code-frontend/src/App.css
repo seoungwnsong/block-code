@@ -1265,3 +1265,345 @@ pre {
     transform: translateY(0) scale(1);
   }
 }
+
+/* =========================================================
+   IDE UI POLISH OVERRIDES
+   These rules intentionally come last so they override the
+   earlier layout styles.
+   ========================================================= */
+
+.app {
+  grid-template-columns: 190px 155px minmax(720px, 1fr) 290px;
+  background: #0b0f14;
+}
+
+.function-sidebar,
+.block-menu,
+.output-panel {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.015), transparent 40%),
+    #0b1220;
+  overflow: auto;
+}
+
+.function-sidebar,
+.block-menu {
+  border-right: 1px solid rgba(148, 163, 184, 0.14);
+  padding: 14px 12px;
+}
+
+.function-sidebar {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.015), transparent 40%),
+    #0b1220;
+}
+
+.block-menu {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.015), transparent 40%),
+    #0b1220;
+}
+
+.output-panel {
+  border-left: 1px solid rgba(148, 163, 184, 0.14);
+  padding: 0;
+}
+
+.sidebar-header {
+  margin-bottom: 14px;
+  padding: 2px 2px 10px;
+}
+
+.sidebar-header h1 {
+  margin: 0;
+  font-size: 16px;
+  color: #e5e7eb;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.sidebar-header span {
+  display: block;
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.block-section {
+  margin-bottom: 20px;
+}
+
+.block-section h3 {
+  margin: 0 0 10px;
+  color: #8b95a7;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.create-function-button {
+  width: 100%;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 10px;
+  padding: 9px 11px;
+  background: #1f2937;
+  color: #e5e7eb;
+  cursor: pointer;
+  font-family: Inter, Arial, sans-serif;
+  font-size: 13px;
+  font-weight: 650;
+  margin-bottom: 14px;
+  box-shadow: none;
+}
+
+.create-function-button:hover {
+  background: #334155;
+  border-color: rgba(148, 163, 184, 0.34);
+}
+
+.workspace-area {
+  padding: 12px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at top left, rgba(56, 189, 248, 0.045), transparent 28%),
+    #0b0f14;
+}
+
+.workspace-shell {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 12px;
+  overflow: hidden;
+  background: #0f172a;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
+}
+
+.workspace-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 8px;
+  min-height: 42px;
+  align-items: end;
+  margin-bottom: 0;
+  padding-bottom: 0;
+  background: #111827;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  overflow-x: auto;
+}
+
+.workspace-tab {
+  min-height: 34px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  background: transparent;
+  color: #94a3b8;
+  border-radius: 8px 8px 0 0;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 650;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.workspace-tab:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: #e5e7eb;
+}
+
+.workspace-tab.active-workspace-tab {
+  background: #0f172a;
+  color: #f8fafc;
+  border-color: rgba(148, 163, 184, 0.14);
+}
+
+.function-tab {
+  border-color: transparent;
+}
+
+.workspace-toolbar {
+  min-height: 72px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px 12px;
+  margin-bottom: 0;
+  background: #0f172a;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.workspace-toolbar-left {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.workspace-toolbar h2 {
+  margin: 0;
+  font-size: 18px;
+  color: #f8fafc;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.workspace-toolbar p {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #111827;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 999px;
+  padding: 5px 7px;
+  box-shadow: none;
+  flex-shrink: 0;
+}
+
+.zoom-controls button {
+  width: auto;
+  border: none;
+  background: #1f2937;
+  color: #d1d5db;
+  border-radius: 999px;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-family: Inter, Arial, sans-serif;
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.zoom-controls button:hover {
+  background: #334155;
+}
+
+.zoom-controls span {
+  min-width: 42px;
+  text-align: center;
+  color: #e5e7eb;
+  font-size: 12px;
+}
+
+.drop-zone {
+  flex: 1;
+  height: auto;
+  width: 100%;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.022) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.022) 1px, transparent 1px),
+    #0f172a;
+  background-size: 28px 28px;
+  border: none;
+  border-radius: 0;
+  padding: 22px;
+  overflow: auto;
+  box-shadow: none;
+}
+
+.empty-message {
+  color: #64748b;
+  font-size: 18px;
+  margin-bottom: 12px;
+  font-family: var(--code-font);
+}
+
+.zoom-canvas {
+  transform-origin: top left;
+  width: 100%;
+  min-width: 900px;
+  min-height: 700px;
+}
+
+.output-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  background: #111827;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.output-header {
+  margin: 0;
+}
+
+.output-header h2 {
+  margin: 0;
+  font-size: 18px;
+  color: #f8fafc;
+  font-weight: 700;
+}
+
+.output-header span {
+  display: block;
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.run-button {
+  width: auto;
+  border: 1px solid #86efac;
+  border-radius: 9px;
+  padding: 8px 14px;
+  min-width: 92px;
+  background: #bbf7d0;
+  color: #166534;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: Inter, Arial, sans-serif;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+
+  box-shadow: none;
+  transition:
+    transform 0.12s ease,
+    background 0.12s ease;
+}
+
+.run-button:hover {
+  background: #86efac;
+  color: #14532d;
+  transform: translateY(-1px);
+  box-shadow: none;
+}
+
+.run-button:active {
+  transform: translateY(0);
+}
+
+.output-panel > .result-message,
+.output-panel > h3,
+.output-panel > pre {
+  margin-left: 16px;
+  margin-right: 16px;
+}
+
+.output-panel > h3 {
+  margin-top: 16px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.output-panel > pre {
+  max-height: calc(100vh - 190px);
+}
