@@ -242,7 +242,7 @@ body {
   z-index: 1;
 }
 
-.function-library-item:has(.function-menu) {
+.function-library-item.menu-open {
   z-index: 80;
 }
 
@@ -605,7 +605,7 @@ body {
   background: rgba(248, 113, 113, 0.3);
 }
 
-/* BLOCK WRAPPER AND ANIMATION */
+/* BLOCK WRAPPER */
 
 .block-wrapper {
   display: block;
@@ -630,7 +630,8 @@ body {
 /* INSERT DROP ZONES */
 
 .insert-drop-zone {
-  width: 340px;
+  width: 100%;
+  max-width: 640px;
   height: 18px;
   margin: -9px 0;
   overflow: visible;
@@ -901,6 +902,106 @@ body {
   border: 1px dashed var(--slot-border, rgba(15, 23, 42, 0.16));
   background: var(--slot-bg, rgba(248, 250, 252, 0.92));
 }
+
+/* RETURN VALUE SLOT */
+
+.return-block .block-row {
+  gap: 8px;
+}
+
+.return-value-slot {
+  min-width: 220px;
+  min-height: 30px;
+  border: 2px dashed rgba(124, 45, 18, 0.28);
+  border-radius: 12px;
+  padding: 3px 6px;
+  background: rgba(255, 237, 213, 0.78);
+
+  display: flex;
+  align-items: center;
+  gap: 6px;
+
+  transition:
+    background 0.14s ease,
+    border-color 0.14s ease,
+    box-shadow 0.14s ease;
+}
+
+.return-value-slot.active-return-value-slot {
+  background: rgba(255, 255, 255, 0.9);
+  border-color: rgba(255, 255, 255, 0.95);
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.22),
+    0 0 12px rgba(255, 255, 255, 0.35);
+}
+
+.return-value-input {
+  width: 100%;
+  min-width: 180px;
+  max-width: 260px;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  padding: 2px 4px;
+  height: 24px;
+  color: #7c2d12;
+  font-size: 13px;
+  font-family: var(--code-font);
+}
+
+.return-value-input:focus {
+  border: none;
+  box-shadow: none;
+}
+
+.return-value-input::placeholder {
+  color: rgba(124, 45, 18, 0.55);
+}
+
+.return-expression-block {
+  min-height: 24px;
+  border-radius: 8px;
+  padding: 3px 6px;
+
+  display: flex;
+  align-items: center;
+  gap: 5px;
+
+  font-family: var(--code-font);
+  font-weight: 700;
+  color: #07111f;
+
+  box-shadow:
+    inset 0 -2px rgba(0, 0, 0, 0.14),
+    inset 0 1px rgba(255, 255, 255, 0.2);
+}
+
+.return-expression-block input,
+.return-expression-block select {
+  height: 24px;
+  min-width: 58px;
+  padding: 2px 6px;
+}
+
+.clear-return-value-button {
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.2);
+  color: white;
+  cursor: pointer;
+  line-height: 1;
+  font-size: 13px;
+  font-family: var(--code-font);
+  flex-shrink: 0;
+}
+
+.clear-return-value-button:hover {
+  background: rgba(15, 23, 42, 0.34);
+}
+
+/* INPUTS */
 
 input,
 select {
