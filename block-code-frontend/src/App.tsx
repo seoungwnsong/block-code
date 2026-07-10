@@ -1886,164 +1886,168 @@ function App() {
       </aside>
 
       <main className="workspace-area">
-        <div className="workspace-tabs app-font">
-          <button
-            className={`workspace-tab ${
-              editingFunction ? "" : "active-workspace-tab"
-            }`}
-            onClick={() => setEditingFunctionId(null)}
-          >
-            Main Workspace
-          </button>
+        <div className="workspace-shell">
+          <div className="workspace-tabs app-font">
+            <button
+              className={`workspace-tab ${
+                editingFunction ? "" : "active-workspace-tab"
+              }`}
+              onClick={() => setEditingFunctionId(null)}
+            >
+              Main Workspace
+            </button>
 
-          {openFunctionTabIds.map((functionId) => {
-            const func = functions.find((item) => item.id === functionId);
-            if (!func) return null;
+            {openFunctionTabIds.map((functionId) => {
+              const func = functions.find((item) => item.id === functionId);
+              if (!func) return null;
 
-            return (
-              <button
-                key={functionId}
-                className={`workspace-tab function-tab ${
-                  editingFunctionId === functionId ? "active-workspace-tab" : ""
-                }`}
-                onClick={() => setEditingFunctionId(functionId)}
-              >
-                <span>{func.name}</span>
-
-                <span
-                  className="tab-close-button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    closeFunctionTab(functionId);
-                  }}
+              return (
+                <button
+                  key={functionId}
+                  className={`workspace-tab function-tab ${
+                    editingFunctionId === functionId ? "active-workspace-tab" : ""
+                  }`}
+                  onClick={() => setEditingFunctionId(functionId)}
                 >
-                  ×
-                </span>
-              </button>
-            );
-          })}
-        </div>
+                  <span>{func.name}</span>
 
-        <div className="workspace-toolbar app-font">
-          <div>
-            <h2>
-              {editingFunction
-                ? `Function: ${editingFunction.name}`
-                : "Workspace"}
-            </h2>
-            <p>
-              {editingFunction
-                ? "Build this function, then switch back to the main workspace."
-                : "Drop blocks into the main area or inside container blocks."}
-            </p>
-
-            {editingFunction && (
-              <div className="function-editor-controls">
-                <div className="function-editor-row">
-                  <label>name</label>
-                  <input
-                    placeholder="function name"
-                    value={editingFunction.name}
-                    onChange={(event) =>
-                      updateFunctionName(editingFunction.id, event.target.value)
-                    }
-                  />
-                </div>
-
-                <div className="parameter-editor">
-                  <div className="parameter-header">
-                    <span>Parameters</span>
-                    <button onClick={() => addParameter(editingFunction.id)}>
-                      + Add Parameter
-                    </button>
-                  </div>
-
-                  {editingFunction.params.length === 0 && (
-                    <p className="parameter-empty">No parameters yet.</p>
-                  )}
-
-                  <div className="parameter-list">
-                    {editingFunction.params.map((param, index) => (
-                      <div key={index} className="parameter-item">
-                        <input
-                          placeholder={`param ${index + 1}`}
-                          value={param}
-                          onChange={(event) =>
-                            updateParameter(
-                              editingFunction.id,
-                              index,
-                              event.target.value
-                            )
-                          }
-                        />
-
-                        <button
-                          onClick={() =>
-                            deleteParameter(editingFunction.id, index)
-                          }
-                        >
-                          ×
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
+                  <span
+                    className="tab-close-button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      closeFunctionTab(functionId);
+                    }}
+                  >
+                    ×
+                  </span>
+                </button>
+              );
+            })}
           </div>
 
-          <div className="zoom-controls">
-            <button onClick={zoomOut}>−</button>
-            <span>{Math.round(zoom * 100)}%</span>
-            <button onClick={zoomIn}>+</button>
-            <button onClick={resetZoom}>Reset</button>
-          </div>
-        </div>
+          <div className="workspace-toolbar app-font">
+            <div className="workspace-toolbar-left">
+              <h2>
+                {editingFunction
+                  ? `Function: ${editingFunction.name}`
+                  : "Workspace"}
+              </h2>
+              <p>
+                {editingFunction
+                  ? "Build this function, then switch back to the main workspace."
+                  : "Drop blocks into the main area or inside container blocks."}
+              </p>
 
-        <div
-          key={editingFunction ? `function-${editingFunction.id}` : "main"}
-          className="drop-zone workspace-mode-card"
-          onDragOver={(event) => event.preventDefault()}
-          onDrop={(event) =>
-            handleDrop(event, {
-              area: "root",
-              index: currentBlocks.length,
-            })
-          }
-        >
-          {currentBlocks.length === 0 && (
-            <div className="empty-message"></div>
-          )}
+              {editingFunction && (
+                <div className="function-editor-controls">
+                  <div className="function-editor-row">
+                    <label>name</label>
+                    <input
+                      placeholder="function name"
+                      value={editingFunction.name}
+                      onChange={(event) =>
+                        updateFunctionName(editingFunction.id, event.target.value)
+                      }
+                    />
+                  </div>
+
+                  <div className="parameter-editor">
+                    <div className="parameter-header">
+                      <span>Parameters</span>
+                      <button onClick={() => addParameter(editingFunction.id)}>
+                        + Add Parameter
+                      </button>
+                    </div>
+
+                    {editingFunction.params.length === 0 && (
+                      <p className="parameter-empty">No parameters yet.</p>
+                    )}
+
+                    <div className="parameter-list">
+                      {editingFunction.params.map((param, index) => (
+                        <div key={index} className="parameter-item">
+                          <input
+                            placeholder={`param ${index + 1}`}
+                            value={param}
+                            onChange={(event) =>
+                              updateParameter(
+                                editingFunction.id,
+                                index,
+                                event.target.value
+                              )
+                            }
+                          />
+
+                          <button
+                            onClick={() =>
+                              deleteParameter(editingFunction.id, index)
+                            }
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="zoom-controls">
+              <button onClick={zoomOut}>−</button>
+              <span>{Math.round(zoom * 100)}%</span>
+              <button onClick={zoomIn}>+</button>
+              <button onClick={resetZoom}>Reset</button>
+            </div>
+          </div>
 
           <div
-            className="zoom-canvas"
-            style={{
-              transform: `scale(${zoom})`,
-            }}
+            key={editingFunction ? `function-${editingFunction.id}` : "main"}
+            className="drop-zone workspace-mode-card"
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={(event) =>
+              handleDrop(event, {
+                area: "root",
+                index: currentBlocks.length,
+              })
+            }
           >
-            {renderBlockList(currentBlocks, "root")}
+            {currentBlocks.length === 0 && (
+              <div className="empty-message"></div>
+            )}
+
+            <div
+              className="zoom-canvas"
+              style={{
+                transform: `scale(${zoom})`,
+              }}
+            >
+              {renderBlockList(currentBlocks, "root")}
+            </div>
           </div>
         </div>
       </main>
 
       <aside className="output-panel app-font">
-        <div className="output-header">
-          <h2>Output</h2>
-          <span>Program result</span>
-        </div>
+        <div className="output-topbar">
+          <div className="output-header">
+            <h2>Output</h2>
+            <span>Program result</span>
+          </div>
 
-        <button className="run-button" onClick={checkFlow}>
-          <svg
-            className="run-icon"
-            viewBox="0 0 24 24"
-            width="16"
-            height="16"
-            aria-hidden="true"
-          >
-            <path d="M8 5V19L19 12L8 5Z" />
-          </svg>
-          <span>Run</span>
-        </button>
+          <button className="run-button" onClick={checkFlow}>
+            <svg
+              className="run-icon"
+              viewBox="0 0 24 24"
+              width="14"
+              height="14"
+              aria-hidden="true"
+            >
+              <path d="M8 5V19L19 12L8 5Z" />
+            </svg>
+            <span>Run</span>
+          </button>
+        </div>
 
         {result && <pre className="result-message">{result}</pre>}
 
