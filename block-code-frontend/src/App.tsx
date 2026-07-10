@@ -34,6 +34,19 @@ type Block =
     }
   | {
       id: number;
+      type: "return";
+      value: string;
+    }
+  | {
+      id: number;
+      type: "call";
+      functionId: number;
+      name: string;
+      paramNames: string[];
+      args: string[];
+    }
+  | {
+      id: number;
       type: "if";
       condition: string;
       children: Block[];
@@ -59,6 +72,13 @@ type Block =
       tryChildren: Block[];
       catchChildren: Block[];
     };
+
+type UserFunction = {
+  id: number;
+  name: string;
+  params: string[];
+  children: Block[];
+};
 
 type BlockType = Block["type"];
 
@@ -88,6 +108,27 @@ function App() {
   const [result, setResult] = useState("");
   const [zoom, setZoom] = useState(1);
   const [activeDropTarget, setActiveDropTarget] = useState<string | null>(null);
+  const [currentDropTarget, setCurrentDropTarget] =
+    useState<DropTarget | null>(null);
+
+  const [functions, setFunctions] = useState<UserFunction[]>([]);
+  const [editingFunctionId, setEditingFunctionId] = useState<number | null>(
+    null
+  );
+  const [openFunctionMenuId, setOpenFunctionMenuId] = useState<number | null>(
+    null
+  );
+  const [functionToDeleteId, setFunctionToDeleteId] = useState<number | null>(
+    null
+  );
+  const [openFunctionTabIds, setOpenFunctionTabIds] = useState<number[]>([]);
+
+  const editingFunction =
+    editingFunctionId === null
+      ? null
+      : functions.find((func) => func.id === editingFunctionId) ?? null;
+
+  const currentBlocks = editingFunction ? editingFunction.children : blocks;
 
   function makeId() {
     return Date.now() + Math.floor(Math.random() * 1000);
@@ -97,6 +138,28 @@ function App() {
     const textLength = value.length === 0 ? 4 : value.length;
     const calculatedWidth = textLength * 8 + 18;
     return Math.min(Math.max(minWidth, calculatedWidth), maxWidth);
+  }
+
+  function setCurrentBlocks(updater: Block[] | ((prev: Block[]) => Block[])) {
+    if (editingFunction) {
+      setFunctions((prev) =>
+        prev.map((func) => {
+          if (func.id !== editingFunction.id) return func;
+
+          const nextChildren =
+            typeof updater === "function" ? updater(func.children) : updater;
+
+          return {
+            ...func,
+            children: nextChildren,
+          };
+        })
+      );
+
+      return;
+    }
+
+    setBlocks(updater);
   }
 
   function createBlock(type: BlockType): Block {
@@ -140,6 +203,14 @@ function App() {
       };
     }
 
+    if (type === "return") {
+      return {
+        id,
+        type: "return",
+        value: "",
+      };
+    }
+
     if (type === "if") {
       return {
         id,
@@ -169,12 +240,23 @@ function App() {
       };
     }
 
+    if (type === "tryCatch") {
+      return {
+        id,
+        type: "tryCatch",
+        catchErrorName: "error",
+        tryChildren: [],
+        catchChildren: [],
+      };
+    }
+
     return {
       id,
-      type: "tryCatch",
-      catchErrorName: "error",
-      tryChildren: [],
-      catchChildren: [],
+      type: "call",
+      functionId: -1,
+      name: "function",
+      paramNames: [],
+      args: [],
     };
   }
 
@@ -235,7 +317,11 @@ function App() {
         }
       }
 
-      if (block.type === "if" || block.type === "while" || block.type === "for") {
+      if (
+        block.type === "if" ||
+        block.type === "while" ||
+        block.type === "for"
+      ) {
         return {
           ...block,
           children: insertIntoBlocks(block.children, target, newBlock),
@@ -267,7 +353,11 @@ function App() {
           return null;
         }
 
-        if (block.type === "if" || block.type === "while" || block.type === "for") {
+        if (
+          block.type === "if" ||
+          block.type === "while" ||
+          block.type === "for"
+        ) {
           const result = removeBlockById(block.children, id);
 
           if (result.removedBlock) {
@@ -331,7 +421,11 @@ function App() {
         return block;
       }
 
-      if (block.type === "if" || block.type === "while" || block.type === "for") {
+      if (
+        block.type === "if" ||
+        block.type === "while" ||
+        block.type === "for"
+      ) {
         const found = findBlockById(block.children, id);
         if (found) return found;
       }
@@ -371,6 +465,7 @@ function App() {
     event.preventDefault();
     event.stopPropagation();
 
+    const finalTarget = currentDropTarget ?? target;
     const source = event.dataTransfer.getData("source");
 
     if (source === "template") {
@@ -378,7 +473,17 @@ function App() {
 
       if (blockType) {
         const newBlock = createBlock(blockType);
-        setBlocks((prev) => insertIntoBlocks(prev, target, newBlock));
+        setCurrentBlocks((prev) => insertIntoBlocks(prev, finalTarget, newBlock));
+      }
+    }
+
+    if (source === "function") {
+      const functionId = Number(event.dataTransfer.getData("functionId"));
+      const func = functions.find((item) => item.id === functionId);
+
+      if (func) {
+        const newBlock = createCallBlock(func);
+        setCurrentBlocks((prev) => insertIntoBlocks(prev, finalTarget, newBlock));
       }
     }
 
@@ -386,32 +491,37 @@ function App() {
       const blockId = Number(event.dataTransfer.getData("blockId"));
 
       if (!Number.isNaN(blockId)) {
-        const movingBlock = findBlockById(blocks, blockId);
+        setCurrentBlocks((prev) => {
+          const movingBlock = findBlockById(prev, blockId);
 
-        if (!movingBlock) {
-          return;
-        }
+          if (!movingBlock) {
+            return prev;
+          }
 
-        if ("parentId" in target && blockContainsId(movingBlock, target.parentId)) {
-          setActiveDropTarget(null);
-          return;
-        }
+          if (
+            "parentId" in finalTarget &&
+            blockContainsId(movingBlock, finalTarget.parentId)
+          ) {
+            return prev;
+          }
 
-        const removeResult = removeBlockById(blocks, blockId);
+          const removeResult = removeBlockById(prev, blockId);
 
-        if (removeResult.removedBlock) {
-          const updated = insertIntoBlocks(
+          if (!removeResult.removedBlock) {
+            return prev;
+          }
+
+          return insertIntoBlocks(
             removeResult.updatedBlocks,
-            target,
+            finalTarget,
             removeResult.removedBlock
           );
-
-          setBlocks(updated);
-        }
+        });
       }
     }
 
     setActiveDropTarget(null);
+    setCurrentDropTarget(null);
   }
 
   function handleDropZoneDragOver(
@@ -420,23 +530,26 @@ function App() {
   ) {
     event.preventDefault();
     event.stopPropagation();
+
     setActiveDropTarget(getDropTargetKey(target));
+    setCurrentDropTarget(target);
   }
 
   function handleDragEnd() {
     setActiveDropTarget(null);
+    setCurrentDropTarget(null);
   }
 
   function addBlock(type: BlockType) {
-    setBlocks((prev) => [...prev, createBlock(type)]);
+    setCurrentBlocks((prev) => [...prev, createBlock(type)]);
   }
 
   function deleteBlock(id: number) {
-    const result = removeBlockById(blocks, id);
-    setBlocks(result.updatedBlocks);
+    const result = removeBlockById(currentBlocks, id);
+    setCurrentBlocks(result.updatedBlocks);
   }
 
-  function updateBlock(id: number, field: string, value: string) {
+  function updateBlock(id: number, field: string, value: string | string[]) {
     function update(blockList: Block[]): Block[] {
       return blockList.map((block) => {
         if (block.id === id) {
@@ -446,7 +559,11 @@ function App() {
           } as Block;
         }
 
-        if (block.type === "if" || block.type === "while" || block.type === "for") {
+        if (
+          block.type === "if" ||
+          block.type === "while" ||
+          block.type === "for"
+        ) {
           return {
             ...block,
             children: update(block.children),
@@ -465,7 +582,7 @@ function App() {
       });
     }
 
-    setBlocks((prev) => update(prev));
+    setCurrentBlocks((prev) => update(prev));
   }
 
   function zoomIn() {
@@ -480,6 +597,280 @@ function App() {
     setZoom(1);
   }
 
+  function createFunction() {
+    const newFunction: UserFunction = {
+      id: makeId(),
+      name: `myFunction${functions.length + 1}`,
+      params: [],
+      children: [],
+    };
+
+    setFunctions((prev) => [...prev, newFunction]);
+    setOpenFunctionTabIds((prev) => [...prev, newFunction.id]);
+    setEditingFunctionId(newFunction.id);
+  }
+
+  function openFunctionTab(id: number) {
+    setOpenFunctionTabIds((prev) =>
+      prev.includes(id) ? prev : [...prev, id]
+    );
+    setEditingFunctionId(id);
+    setOpenFunctionMenuId(null);
+  }
+
+  function closeFunctionTab(id: number) {
+    setOpenFunctionTabIds((prev) => prev.filter((tabId) => tabId !== id));
+
+    if (editingFunctionId === id) {
+      setEditingFunctionId(null);
+    }
+  }
+
+  function requestDeleteFunction(id: number) {
+    setFunctionToDeleteId(id);
+    setOpenFunctionMenuId(null);
+  }
+
+  function cancelDeleteFunction() {
+    setFunctionToDeleteId(null);
+  }
+
+  function confirmDeleteFunction() {
+    if (functionToDeleteId === null) return;
+
+    deleteFunction(functionToDeleteId);
+    setFunctionToDeleteId(null);
+  }
+
+  function syncFunctionCalls(
+    blockList: Block[],
+    functionId: number,
+    nextName: string,
+    nextParams: string[]
+  ): Block[] {
+    return blockList.map((block) => {
+      if (block.type === "call" && block.functionId === functionId) {
+        const nextArgs = nextParams.map((_, index) => block.args[index] ?? "");
+
+        return {
+          ...block,
+          name: nextName,
+          paramNames: nextParams,
+          args: nextArgs,
+        };
+      }
+
+      if (
+        block.type === "if" ||
+        block.type === "while" ||
+        block.type === "for"
+      ) {
+        return {
+          ...block,
+          children: syncFunctionCalls(
+            block.children,
+            functionId,
+            nextName,
+            nextParams
+          ),
+        };
+      }
+
+      if (block.type === "tryCatch") {
+        return {
+          ...block,
+          tryChildren: syncFunctionCalls(
+            block.tryChildren,
+            functionId,
+            nextName,
+            nextParams
+          ),
+          catchChildren: syncFunctionCalls(
+            block.catchChildren,
+            functionId,
+            nextName,
+            nextParams
+          ),
+        };
+      }
+
+      return block;
+    });
+  }
+
+  function updateFunctionName(id: number, name: string) {
+    const currentFunction = functions.find((func) => func.id === id);
+    const currentParams = currentFunction?.params ?? [];
+
+    setFunctions((prev) =>
+      prev.map((func) => {
+        const updatedFunc = func.id === id ? { ...func, name } : func;
+
+        return {
+          ...updatedFunc,
+          children: syncFunctionCalls(
+            updatedFunc.children,
+            id,
+            name,
+            currentParams
+          ),
+        };
+      })
+    );
+
+    setBlocks((prev) => syncFunctionCalls(prev, id, name, currentParams));
+  }
+
+  function addParameter(id: number) {
+    const currentFunction = functions.find((func) => func.id === id);
+    if (!currentFunction) return;
+
+    const nextParams = [...currentFunction.params, ""];
+
+    setFunctions((prev) =>
+      prev.map((func) => {
+        const updatedFunc =
+          func.id === id ? { ...func, params: nextParams } : func;
+
+        return {
+          ...updatedFunc,
+          children: syncFunctionCalls(
+            updatedFunc.children,
+            id,
+            currentFunction.name,
+            nextParams
+          ),
+        };
+      })
+    );
+
+    setBlocks((prev) =>
+      syncFunctionCalls(prev, id, currentFunction.name, nextParams)
+    );
+  }
+
+  function updateParameter(id: number, index: number, value: string) {
+    const currentFunction = functions.find((func) => func.id === id);
+    if (!currentFunction) return;
+
+    const nextParams = [...currentFunction.params];
+    nextParams[index] = value;
+
+    setFunctions((prev) =>
+      prev.map((func) => {
+        const updatedFunc =
+          func.id === id ? { ...func, params: nextParams } : func;
+
+        return {
+          ...updatedFunc,
+          children: syncFunctionCalls(
+            updatedFunc.children,
+            id,
+            currentFunction.name,
+            nextParams
+          ),
+        };
+      })
+    );
+
+    setBlocks((prev) =>
+      syncFunctionCalls(prev, id, currentFunction.name, nextParams)
+    );
+  }
+
+  function deleteParameter(id: number, index: number) {
+    const currentFunction = functions.find((func) => func.id === id);
+    if (!currentFunction) return;
+
+    const nextParams = currentFunction.params.filter(
+      (_, paramIndex) => paramIndex !== index
+    );
+
+    setFunctions((prev) =>
+      prev.map((func) => {
+        const updatedFunc =
+          func.id === id ? { ...func, params: nextParams } : func;
+
+        return {
+          ...updatedFunc,
+          children: syncFunctionCalls(
+            updatedFunc.children,
+            id,
+            currentFunction.name,
+            nextParams
+          ),
+        };
+      })
+    );
+
+    setBlocks((prev) =>
+      syncFunctionCalls(prev, id, currentFunction.name, nextParams)
+    );
+  }
+
+  function createCallBlock(func: UserFunction): Block {
+    return {
+      id: makeId(),
+      type: "call",
+      functionId: func.id,
+      name: func.name,
+      paramNames: func.params,
+      args: func.params.map(() => ""),
+    };
+  }
+
+  function removeFunctionCalls(blockList: Block[], functionId: number): Block[] {
+    return blockList
+      .filter(
+        (block) => !(block.type === "call" && block.functionId === functionId)
+      )
+      .map((block) => {
+        if (
+          block.type === "if" ||
+          block.type === "while" ||
+          block.type === "for"
+        ) {
+          return {
+            ...block,
+            children: removeFunctionCalls(block.children, functionId),
+          };
+        }
+
+        if (block.type === "tryCatch") {
+          return {
+            ...block,
+            tryChildren: removeFunctionCalls(block.tryChildren, functionId),
+            catchChildren: removeFunctionCalls(block.catchChildren, functionId),
+          };
+        }
+
+        return block;
+      });
+  }
+
+  function deleteFunction(id: number) {
+    setFunctions((prev) =>
+      prev
+        .filter((func) => func.id !== id)
+        .map((func) => ({
+          ...func,
+          children: removeFunctionCalls(func.children, id),
+        }))
+    );
+
+    setOpenFunctionTabIds((prev) => prev.filter((tabId) => tabId !== id));
+
+    if (editingFunctionId === id) {
+      setEditingFunctionId(null);
+    }
+
+    setBlocks((prev) => removeFunctionCalls(prev, id));
+  }
+
+  function addFunctionCall(func: UserFunction) {
+    setCurrentBlocks((prev) => [...prev, createCallBlock(func)]);
+  }
+
   async function checkFlow() {
     try {
       const response = await fetch("http://localhost:3000/check-flow", {
@@ -487,26 +878,35 @@ function App() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ blocks }),
+        body: JSON.stringify({
+          functions: functions.map((func) => ({
+            id: func.id,
+            type: "def",
+            name: func.name,
+            params: func.params,
+            children: func.children,
+          })),
+          blocks,
+        }),
       });
-  
+
       const data = await response.json();
-  
+
       if (!response.ok) {
         setResult(`Server Error: ${data.error || "Something went wrong."}`);
         return;
       }
-  
+
       if (data.status === "error" || data.error) {
         setResult(`Runtime Error: ${data.error || "Program could not run."}`);
         return;
       }
-  
+
       if (Array.isArray(data.output) && data.output.length > 0) {
         setResult(data.output.join("\n"));
         return;
       }
-  
+
       setResult("Program finished with no output.");
     } catch (error) {
       console.error(error);
@@ -574,6 +974,32 @@ function App() {
     );
   }
 
+  function getBlockHoverTarget(
+    event: React.DragEvent<HTMLDivElement>,
+    area: DropTarget["area"],
+    index: number,
+    parentId?: number
+  ): DropTarget {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const mouseY = event.clientY;
+    const isTopHalf = mouseY < rect.top + rect.height / 2;
+
+    const targetIndex = isTopHalf ? index : index + 1;
+
+    if (area === "root") {
+      return {
+        area: "root",
+        index: targetIndex,
+      };
+    }
+
+    return {
+      area,
+      parentId: parentId as number,
+      index: targetIndex,
+    };
+  }
+
   function renderBlockList(
     blockList: Block[],
     area: DropTarget["area"],
@@ -588,7 +1014,18 @@ function App() {
         )}
 
         {blockList.map((block, index) => (
-          <div key={block.id} className="block-wrapper">
+          <div
+            key={block.id}
+            className="block-wrapper"
+            onDragOver={(event) => {
+              const target = getBlockHoverTarget(event, area, index, parentId);
+              handleDropZoneDragOver(event, target);
+            }}
+            onDrop={(event) => {
+              const target = getBlockHoverTarget(event, area, index, parentId);
+              handleDrop(event, target);
+            }}
+          >
             {renderBlock(block)}
 
             {renderDropZone(
@@ -647,7 +1084,9 @@ function App() {
               placeholder="name"
               value={block.name}
               style={{ width: getInputWidth(block.name) }}
-              onChange={(event) => updateBlock(block.id, "name", event.target.value)}
+              onChange={(event) =>
+                updateBlock(block.id, "name", event.target.value)
+              }
             />
 
             <span>=</span>
@@ -669,7 +1108,9 @@ function App() {
               placeholder="left"
               value={block.left}
               style={{ width: getInputWidth(block.left) }}
-              onChange={(event) => updateBlock(block.id, "left", event.target.value)}
+              onChange={(event) =>
+                updateBlock(block.id, "left", event.target.value)
+              }
             />
 
             <select
@@ -702,7 +1143,9 @@ function App() {
               placeholder="left"
               value={block.left}
               style={{ width: getInputWidth(block.left) }}
-              onChange={(event) => updateBlock(block.id, "left", event.target.value)}
+              onChange={(event) =>
+                updateBlock(block.id, "left", event.target.value)
+              }
             />
 
             <select
@@ -743,6 +1186,44 @@ function App() {
                 updateBlock(block.id, "value", event.target.value)
               }
             />
+          </div>
+        )}
+
+        {block.type === "return" && (
+          <div className="block-row">
+            <span>return</span>
+            <input
+              placeholder="value"
+              value={block.value}
+              style={{ width: getInputWidth(block.value) }}
+              onChange={(event) =>
+                updateBlock(block.id, "value", event.target.value)
+              }
+            />
+          </div>
+        )}
+
+        {block.type === "call" && (
+          <div className="block-row function-call-row">
+            <span>{block.name}</span>
+            <span>(</span>
+
+            {block.args.map((arg, index) => (
+              <input
+                key={index}
+                className="function-arg-hole"
+                placeholder={block.paramNames[index] || `arg ${index + 1}`}
+                value={arg}
+                style={{ width: getInputWidth(arg, 72, 160) }}
+                onChange={(event) => {
+                  const newArgs = [...block.args];
+                  newArgs[index] = event.target.value;
+                  updateBlock(block.id, "args", newArgs);
+                }}
+              />
+            ))}
+
+            <span>)</span>
           </div>
         )}
 
@@ -848,9 +1329,97 @@ function App() {
   }
 
   return (
-    <div className="app">
-      <aside className="block-menu">
-        <h1>Blocks</h1>
+    <div className="app" onClick={() => setOpenFunctionMenuId(null)}>
+      <aside className="function-sidebar app-font">
+        <div className="sidebar-header">
+          <h1>Functions</h1>
+          <span>Custom blocks</span>
+        </div>
+
+        <button className="create-function-button" onClick={createFunction}>
+          + Create Function
+        </button>
+
+        {functions.length === 0 && (
+          <p className="empty-function-message">
+            Create a function to make your own reusable block.
+          </p>
+        )}
+
+        {functions.map((func) => (
+          <div key={func.id} className="function-library-item">
+            <div
+              className="template-block function-template function-library-block"
+              draggable
+              onDragStart={(event) => {
+                event.dataTransfer.setData("source", "function");
+                event.dataTransfer.setData("functionId", String(func.id));
+                event.dataTransfer.effectAllowed = "copy";
+              }}
+              onDragEnd={handleDragEnd}
+              onClick={() => addFunctionCall(func)}
+            >
+              <span className="function-block-name">{func.name}</span>
+
+              <button
+                className="function-more-button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setOpenFunctionMenuId((prev) =>
+                    prev === func.id ? null : func.id
+                  );
+                }}
+                title="Function options"
+              >
+                ⋯
+              </button>
+
+              {openFunctionMenuId === func.id && (
+                <div
+                  className="function-menu"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <button
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      openFunctionTab(func.id);
+                    }}
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M4 20H8L18.5 9.5L14.5 5.5L4 16V20Z" />
+                      <path d="M13.5 6.5L17.5 10.5" />
+                    </svg>
+                    <span>Edit</span>
+                  </button>
+
+                  <button
+                    className="danger-menu-item"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      requestDeleteFunction(func.id);
+                    }}
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M5 7H19" />
+                      <path d="M10 11V17" />
+                      <path d="M14 11V17" />
+                      <path d="M8 7L9 4H15L16 7" />
+                      <path d="M7 7L8 20H16L17 7" />
+                    </svg>
+                    <span>Delete</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </aside>
+
+      <aside className="block-menu app-font">
+        <div className="sidebar-header">
+          <h1>Blocks</h1>
+          <span>Drag or click</span>
+        </div>
 
         <section className="block-section">
           <h3>Variables</h3>
@@ -882,14 +1451,115 @@ function App() {
         <section className="block-section">
           <h3>Output</h3>
           {renderPaletteBlock("print", "print", "print-template")}
+          {renderPaletteBlock("return", "return", "return-template")}
         </section>
       </aside>
 
       <main className="workspace-area">
-        <div className="workspace-toolbar">
+        <div className="workspace-tabs app-font">
+          <button
+            className={`workspace-tab ${
+              editingFunction ? "" : "active-workspace-tab"
+            }`}
+            onClick={() => setEditingFunctionId(null)}
+          >
+            Main Workspace
+          </button>
+
+          {openFunctionTabIds.map((functionId) => {
+            const func = functions.find((item) => item.id === functionId);
+            if (!func) return null;
+
+            return (
+              <button
+                key={functionId}
+                className={`workspace-tab function-tab ${
+                  editingFunctionId === functionId ? "active-workspace-tab" : ""
+                }`}
+                onClick={() => setEditingFunctionId(functionId)}
+              >
+                <span>{func.name}</span>
+
+                <span
+                  className="tab-close-button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    closeFunctionTab(functionId);
+                  }}
+                >
+                  ×
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="workspace-toolbar app-font">
           <div>
-            <h2>Workspace</h2>
-            <p>Drop blocks into the main area or inside container blocks.</p>
+            <h2>
+              {editingFunction
+                ? `Function: ${editingFunction.name}`
+                : "Workspace"}
+            </h2>
+            <p>
+              {editingFunction
+                ? "Build this function, then switch back to the main workspace."
+                : "Drop blocks into the main area or inside container blocks."}
+            </p>
+
+            {editingFunction && (
+              <div className="function-editor-controls">
+                <div className="function-editor-row">
+                  <label>name</label>
+                  <input
+                    placeholder="function name"
+                    value={editingFunction.name}
+                    onChange={(event) =>
+                      updateFunctionName(editingFunction.id, event.target.value)
+                    }
+                  />
+                </div>
+
+                <div className="parameter-editor">
+                  <div className="parameter-header">
+                    <span>Parameters</span>
+                    <button onClick={() => addParameter(editingFunction.id)}>
+                      + Add Parameter
+                    </button>
+                  </div>
+
+                  {editingFunction.params.length === 0 && (
+                    <p className="parameter-empty">No parameters yet.</p>
+                  )}
+
+                  <div className="parameter-list">
+                    {editingFunction.params.map((param, index) => (
+                      <div key={index} className="parameter-item">
+                        <input
+                          placeholder={`param ${index + 1}`}
+                          value={param}
+                          onChange={(event) =>
+                            updateParameter(
+                              editingFunction.id,
+                              index,
+                              event.target.value
+                            )
+                          }
+                        />
+
+                        <button
+                          onClick={() =>
+                            deleteParameter(editingFunction.id, index)
+                          }
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="zoom-controls">
@@ -901,16 +1571,17 @@ function App() {
         </div>
 
         <div
-          className="drop-zone"
+          key={editingFunction ? `function-${editingFunction.id}` : "main"}
+          className="drop-zone workspace-mode-card"
           onDragOver={(event) => event.preventDefault()}
           onDrop={(event) =>
             handleDrop(event, {
               area: "root",
-              index: blocks.length,
+              index: currentBlocks.length,
             })
           }
         >
-          {blocks.length === 0 && (
+          {currentBlocks.length === 0 && (
             <div className="empty-message">Drag a block here</div>
           )}
 
@@ -920,14 +1591,17 @@ function App() {
               transform: `scale(${zoom})`,
             }}
           >
-            {renderBlockList(blocks, "root")}
+            {renderBlockList(currentBlocks, "root")}
           </div>
         </div>
       </main>
 
-      <aside className="output-panel">
-        <h2>Output</h2>
-        
+      <aside className="output-panel app-font">
+        <div className="output-header">
+          <h2>Output</h2>
+          <span>Program result</span>
+        </div>
+
         <button className="run-button" onClick={checkFlow}>
           <svg
             className="run-icon"
@@ -941,11 +1615,54 @@ function App() {
           <span>Run</span>
         </button>
 
-        {result && <p className="result-message">{result}</p>}
+        {result && <pre className="result-message">{result}</pre>}
 
         <h3>JSON</h3>
-        <pre>{JSON.stringify({ blocks }, null, 2)}</pre>
+        <pre>
+          {JSON.stringify(
+            {
+              functions: functions.map((func) => ({
+                id: func.id,
+                type: "def",
+                name: func.name,
+                params: func.params,
+                children: func.children,
+              })),
+              blocks,
+            },
+            null,
+            2
+          )}
+        </pre>
       </aside>
+
+      {functionToDeleteId !== null && (
+        <div className="modal-backdrop">
+          <div className="confirm-modal">
+            <h2>Delete function?</h2>
+            <p>
+              This will remove the function and any blocks that call it. This
+              action cannot be undone.
+            </p>
+
+            <div className="modal-actions">
+              <button
+                className="cancel-delete-button"
+                onClick={cancelDeleteFunction}
+              >
+                Cancel
+              </button>
+
+              <button
+                className="confirm-delete-button"
+                onClick={confirmDeleteFunction}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
