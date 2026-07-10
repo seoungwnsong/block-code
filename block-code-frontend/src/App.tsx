@@ -5,6 +5,32 @@ type DataType = "int" | "float" | "bool" | "string";
 type MathOperator = "+" | "-" | "*" | "/" | "%";
 type LogicOperator = "==" | "!=" | ">" | "<" | ">=" | "<=" | "and" | "or";
 
+type ExpressionBlock =
+  | {
+      id: number;
+      type: "calculation";
+      left: string;
+      operator: MathOperator;
+      right: string;
+    }
+  | {
+      id: number;
+      type: "logic";
+      left: string;
+      operator: LogicOperator;
+      right: string;
+    }
+  | {
+      id: number;
+      type: "call";
+      functionId: number;
+      name: string;
+      paramNames: string[];
+      args: string[];
+    };
+
+type ReturnValue = string | ExpressionBlock;
+
 type Block =
   | {
       id: number;
@@ -35,7 +61,7 @@ type Block =
   | {
       id: number;
       type: "return";
-      value: string;
+      value: ReturnValue;
     }
   | {
       id: number;
@@ -82,7 +108,7 @@ type UserFunction = {
 
 type BlockType = Block["type"];
 
-type DropTarget =
+type ListDropTarget =
   | {
       area: "root";
       index: number;
@@ -102,6 +128,14 @@ type DropTarget =
       parentId: number;
       index: number;
     };
+
+type ReturnDropTarget = {
+  area: "returnValue";
+  parentId: number;
+};
+
+type DropTarget = ListDropTarget | ReturnDropTarget;
+type ListArea = ListDropTarget["area"];
 
 function App() {
   const [blocks, setBlocks] = useState<Block[]>([]);
@@ -265,7 +299,28 @@ function App() {
       return `root-${target.index}`;
     }
 
+    if (target.area === "returnValue") {
+      return `returnValue-${target.parentId}`;
+    }
+
     return `${target.area}-${target.parentId}-${target.index}`;
+  }
+
+  function isExpressionBlock(value: ReturnValue): value is ExpressionBlock {
+    return (
+      typeof value !== "string" &&
+      (value.type === "calculation" ||
+        value.type === "logic" ||
+        value.type === "call")
+    );
+  }
+
+  function canUseAsReturnValue(block: Block): block is ExpressionBlock {
+    return (
+      block.type === "calculation" ||
+      block.type === "logic" ||
+      block.type === "call"
+    );
   }
 
   function insertIntoBlocks(
@@ -280,7 +335,19 @@ function App() {
     }
 
     return blockList.map((block) => {
-      if (block.id === target.parentId) {
+      if (
+        target.area === "returnValue" &&
+        block.id === target.parentId &&
+        block.type === "return" &&
+        canUseAsReturnValue(newBlock)
+      ) {
+        return {
+          ...block,
+          value: newBlock,
+        };
+      }
+
+      if (target.area !== "returnValue" && block.id === target.parentId) {
         if (
           target.area === "children" &&
           (block.type === "if" ||
@@ -354,6 +421,19 @@ function App() {
         }
 
         if (
+          block.type === "return" &&
+          isExpressionBlock(block.value) &&
+          block.value.id === id
+        ) {
+          removedBlock = block.value as Block;
+
+          return {
+            ...block,
+            value: "",
+          };
+        }
+
+        if (
           block.type === "if" ||
           block.type === "while" ||
           block.type === "for"
@@ -422,6 +502,14 @@ function App() {
       }
 
       if (
+        block.type === "return" &&
+        isExpressionBlock(block.value) &&
+        block.value.id === id
+      ) {
+        return block.value as Block;
+      }
+
+      if (
         block.type === "if" ||
         block.type === "while" ||
         block.type === "for"
@@ -440,6 +528,114 @@ function App() {
     }
 
     return null;
+  }
+
+  function findBlockLocation(
+    blockList: Block[],
+    id: number,
+    area: ListArea = "root",
+    parentId?: number
+  ): ListDropTarget | null {
+    for (let index = 0; index < blockList.length; index++) {
+      const block = blockList[index];
+
+      if (block.id === id) {
+        if (area === "root") {
+          return {
+            area: "root",
+            index,
+          };
+        }
+
+        return {
+          area,
+          parentId: parentId as number,
+          index,
+        };
+      }
+
+      if (
+        block.type === "if" ||
+        block.type === "while" ||
+        block.type === "for"
+      ) {
+        const found = findBlockLocation(
+          block.children,
+          id,
+          "children",
+          block.id
+        );
+
+        if (found) return found;
+      }
+
+      if (block.type === "tryCatch") {
+        const foundInTry = findBlockLocation(
+          block.tryChildren,
+          id,
+          "tryChildren",
+          block.id
+        );
+
+        if (foundInTry) return foundInTry;
+
+        const foundInCatch = findBlockLocation(
+          block.catchChildren,
+          id,
+          "catchChildren",
+          block.id
+        );
+
+        if (foundInCatch) return foundInCatch;
+      }
+    }
+
+    return null;
+  }
+
+  function isSameListTarget(source: ListDropTarget, target: DropTarget) {
+    if (target.area === "returnValue") {
+      return false;
+    }
+
+    if (source.area !== target.area) {
+      return false;
+    }
+
+    if (source.area === "root" && target.area === "root") {
+      return true;
+    }
+
+    if ("parentId" in source && "parentId" in target) {
+      return source.parentId === target.parentId;
+    }
+
+    return false;
+  }
+
+  function adjustTargetAfterRemoval(
+    blockList: Block[],
+    blockId: number,
+    target: DropTarget
+  ): DropTarget {
+    if (target.area === "returnValue") {
+      return target;
+    }
+
+    const sourceLocation = findBlockLocation(blockList, blockId);
+
+    if (
+      sourceLocation &&
+      isSameListTarget(sourceLocation, target) &&
+      sourceLocation.index < target.index
+    ) {
+      return {
+        ...target,
+        index: target.index - 1,
+      };
+    }
+
+    return target;
   }
 
   function handleTemplateDragStart(
@@ -499,11 +695,24 @@ function App() {
           }
 
           if (
+            finalTarget.area === "returnValue" &&
+            !canUseAsReturnValue(movingBlock)
+          ) {
+            return prev;
+          }
+
+          if (
             "parentId" in finalTarget &&
             blockContainsId(movingBlock, finalTarget.parentId)
           ) {
             return prev;
           }
+
+          const adjustedTarget = adjustTargetAfterRemoval(
+            prev,
+            blockId,
+            finalTarget
+          );
 
           const removeResult = removeBlockById(prev, blockId);
 
@@ -513,7 +722,7 @@ function App() {
 
           return insertIntoBlocks(
             removeResult.updatedBlocks,
-            finalTarget,
+            adjustedTarget,
             removeResult.removedBlock
           );
         });
@@ -549,7 +758,11 @@ function App() {
     setCurrentBlocks(result.updatedBlocks);
   }
 
-  function updateBlock(id: number, field: string, value: string | string[]) {
+  function updateBlock(
+    id: number,
+    field: string,
+    value: string | string[] | ReturnValue
+  ) {
     function update(blockList: Block[]): Block[] {
       return blockList.map((block) => {
         if (block.id === id) {
@@ -557,6 +770,20 @@ function App() {
             ...block,
             [field]: value,
           } as Block;
+        }
+
+        if (
+          block.type === "return" &&
+          isExpressionBlock(block.value) &&
+          block.value.id === id
+        ) {
+          return {
+            ...block,
+            value: {
+              ...block.value,
+              [field]: value,
+            } as ExpressionBlock,
+          };
         }
 
         if (
@@ -642,6 +869,30 @@ function App() {
     setFunctionToDeleteId(null);
   }
 
+  function syncExpressionFunctionCalls(
+    value: ReturnValue,
+    functionId: number,
+    nextName: string,
+    nextParams: string[]
+  ): ReturnValue {
+    if (!isExpressionBlock(value)) {
+      return value;
+    }
+
+    if (value.type === "call" && value.functionId === functionId) {
+      const nextArgs = nextParams.map((_, index) => value.args[index] ?? "");
+
+      return {
+        ...value,
+        name: nextName,
+        paramNames: nextParams,
+        args: nextArgs,
+      };
+    }
+
+    return value;
+  }
+
   function syncFunctionCalls(
     blockList: Block[],
     functionId: number,
@@ -657,6 +908,18 @@ function App() {
           name: nextName,
           paramNames: nextParams,
           args: nextArgs,
+        };
+      }
+
+      if (block.type === "return") {
+        return {
+          ...block,
+          value: syncExpressionFunctionCalls(
+            block.value,
+            functionId,
+            nextName,
+            nextParams
+          ),
         };
       }
 
@@ -819,12 +1082,37 @@ function App() {
     };
   }
 
+  function removeFunctionCallsFromReturnValue(
+    value: ReturnValue,
+    functionId: number
+  ): ReturnValue {
+    if (
+      isExpressionBlock(value) &&
+      value.type === "call" &&
+      value.functionId === functionId
+    ) {
+      return "";
+    }
+
+    return value;
+  }
+
   function removeFunctionCalls(blockList: Block[], functionId: number): Block[] {
     return blockList
       .filter(
         (block) => !(block.type === "call" && block.functionId === functionId)
       )
       .map((block) => {
+        if (block.type === "return") {
+          return {
+            ...block,
+            value: removeFunctionCallsFromReturnValue(
+              block.value,
+              functionId
+            ),
+          };
+        }
+
         if (
           block.type === "if" ||
           block.type === "while" ||
@@ -976,10 +1264,10 @@ function App() {
 
   function getBlockHoverTarget(
     event: React.DragEvent<HTMLDivElement>,
-    area: DropTarget["area"],
+    area: ListArea,
     index: number,
     parentId?: number
-  ): DropTarget {
+  ): ListDropTarget {
     const rect = event.currentTarget.getBoundingClientRect();
     const mouseY = event.clientY;
     const isTopHalf = mouseY < rect.top + rect.height / 2;
@@ -1002,7 +1290,7 @@ function App() {
 
   function renderBlockList(
     blockList: Block[],
-    area: DropTarget["area"],
+    area: ListArea,
     parentId?: number
   ) {
     return (
@@ -1049,6 +1337,150 @@ function App() {
       block.type === "while" ||
       block.type === "for" ||
       block.type === "tryCatch"
+    );
+  }
+
+  function renderExpressionBlock(expression: ExpressionBlock) {
+    if (expression.type === "calculation") {
+      return (
+        <div className="return-expression-block calculation-block">
+          <input
+            placeholder="left"
+            value={expression.left}
+            style={{ width: getInputWidth(expression.left) }}
+            onChange={(event) =>
+              updateBlock(expression.id, "left", event.target.value)
+            }
+          />
+
+          <select
+            value={expression.operator}
+            onChange={(event) =>
+              updateBlock(expression.id, "operator", event.target.value)
+            }
+          >
+            <option value="+">+</option>
+            <option value="-">−</option>
+            <option value="*">×</option>
+            <option value="/">÷</option>
+            <option value="%">%</option>
+          </select>
+
+          <input
+            placeholder="right"
+            value={expression.right}
+            style={{ width: getInputWidth(expression.right) }}
+            onChange={(event) =>
+              updateBlock(expression.id, "right", event.target.value)
+            }
+          />
+        </div>
+      );
+    }
+
+    if (expression.type === "logic") {
+      return (
+        <div className="return-expression-block logic-block">
+          <input
+            placeholder="left"
+            value={expression.left}
+            style={{ width: getInputWidth(expression.left) }}
+            onChange={(event) =>
+              updateBlock(expression.id, "left", event.target.value)
+            }
+          />
+
+          <select
+            value={expression.operator}
+            onChange={(event) =>
+              updateBlock(expression.id, "operator", event.target.value)
+            }
+          >
+            <option value="==">==</option>
+            <option value="!=">!=</option>
+            <option value=">">&gt;</option>
+            <option value="<">&lt;</option>
+            <option value=">=">&gt;=</option>
+            <option value="<=">&lt;=</option>
+            <option value="and">and</option>
+            <option value="or">or</option>
+          </select>
+
+          <input
+            placeholder="right"
+            value={expression.right}
+            style={{ width: getInputWidth(expression.right) }}
+            onChange={(event) =>
+              updateBlock(expression.id, "right", event.target.value)
+            }
+          />
+        </div>
+      );
+    }
+
+    return (
+      <div className="return-expression-block call-block">
+        <span>{expression.name}</span>
+        <span>(</span>
+
+        {expression.args.map((arg, index) => (
+          <input
+            key={index}
+            className="function-arg-hole"
+            placeholder={expression.paramNames[index] || `arg ${index + 1}`}
+            value={arg}
+            style={{ width: getInputWidth(arg, 72, 160) }}
+            onChange={(event) => {
+              const newArgs = [...expression.args];
+              newArgs[index] = event.target.value;
+              updateBlock(expression.id, "args", newArgs);
+            }}
+          />
+        ))}
+
+        <span>)</span>
+      </div>
+    );
+  }
+
+  function renderReturnValue(block: Extract<Block, { type: "return" }>) {
+    const target: DropTarget = {
+      area: "returnValue",
+      parentId: block.id,
+    };
+
+    const key = getDropTargetKey(target);
+
+    return (
+      <div
+        className={`return-value-slot ${
+          activeDropTarget === key ? "active-return-value-slot" : ""
+        }`}
+        onDragOver={(event) => handleDropZoneDragOver(event, target)}
+        onDrop={(event) => handleDrop(event, target)}
+      >
+        {typeof block.value === "string" ? (
+          <input
+            className="return-value-input"
+            placeholder="type value or drop block"
+            value={block.value}
+            onChange={(event) =>
+              updateBlock(block.id, "value", event.target.value)
+            }
+          />
+        ) : (
+          <>
+            {renderExpressionBlock(block.value)}
+
+            <button
+              className="clear-return-value-button"
+              onClick={() => updateBlock(block.id, "value", "")}
+            >
+              ×
+            </button>
+          </>
+        )}
+      </div>
     );
   }
 
@@ -1192,14 +1624,7 @@ function App() {
         {block.type === "return" && (
           <div className="block-row">
             <span>return</span>
-            <input
-              placeholder="value"
-              value={block.value}
-              style={{ width: getInputWidth(block.value) }}
-              onChange={(event) =>
-                updateBlock(block.id, "value", event.target.value)
-              }
-            />
+            {renderReturnValue(block)}
           </div>
         )}
 
@@ -1347,7 +1772,12 @@ function App() {
         )}
 
         {functions.map((func) => (
-          <div key={func.id} className="function-library-item">
+          <div
+            key={func.id}
+            className={`function-library-item ${
+              openFunctionMenuId === func.id ? "menu-open" : ""
+            }`}
+          >
             <div
               className="template-block function-template function-library-block"
               draggable
@@ -1582,7 +2012,7 @@ function App() {
           }
         >
           {currentBlocks.length === 0 && (
-            <div className="empty-message">Drag a block here</div>
+            <div className="empty-message"></div>
           )}
 
           <div
