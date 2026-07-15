@@ -1,6 +1,3 @@
-// NEW: import ReturnSignal so try/catch can let function returns pass through.
-const { ReturnSignal } = require('./function');
-
 class Statement {
     evaluate() {}
 }
@@ -138,9 +135,6 @@ class TaC extends Statement {
                 stmt.evaluate(env);
             }
         } catch (e) {
-            // NEW: a `return` inside the try body throws a ReturnSignal, which is
-            // control flow, not an error — let it propagate to the function boundary.
-            if (e instanceof ReturnSignal) throw e;
             env[this.error] = e;
             for (const stmt of this.handler) {
                 stmt.evaluate(env);

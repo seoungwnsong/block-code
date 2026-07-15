@@ -10,20 +10,8 @@ class BinaryOperator extends Expr {
     evaluate(env) {
         const left = this.left.evaluate(env);
         const right = this.right.evaluate(env);
-
-        const isString = (v) => typeof v === 'string';
-
         switch (this.op) {
-            case "+": {
-                const leftIsStr  = isString(left);
-                const rightIsStr = isString(right);
-                if (leftIsStr && rightIsStr)   return left + right;  // string concat
-                if (!leftIsStr && !rightIsStr) return left + right;  // numeric add
-                // mismatch
-                throw new TypeError(
-                    `Unsupported operand types for +: '${leftIsStr ? 'str' : 'num'}' and '${rightIsStr ? 'str' : 'num'}'`
-                );
-            }
+            case "+":   return left + right;
             case "-":   return left - right;
             case "*":   return left * right;
             case "/":

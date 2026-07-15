@@ -1,6 +1,5 @@
 const { BinaryOperator } = require('./operations');
 const { num, Booleans, Strings } = require('./permitivedatatypes');
-const { Call } = require('./function');   // NEW: so "add(2, 3)" in a string parses to a call
 
 function tokenize(input) {
     const s = String(input);
@@ -46,7 +45,6 @@ function tokenize(input) {
 
         if (c === '(') { tokens.push({ type: 'lparen' }); i++; continue; }
         if (c === ')') { tokens.push({ type: 'rparen' }); i++; continue; }
-        if (c === ',') { tokens.push({ type: 'comma' }); i++; continue; }   // NEW: argument separator
         if ('+-*/%<>'.includes(c)) { tokens.push({ type: 'op', value: c }); i++; continue; }
 
         throw new Error(`Unexpected character '${c}' in expression: ${s}`);
@@ -113,17 +111,6 @@ function parse(input) {
         if (t.type === 'ident') {
             next();
             const name = t.value;
-            // NEW: function-call syntax  name(arg, arg, ...)  ->  a Call expression
-            if (peek().type === 'lparen') {
-                next(); // consume '('
-                const args = [];
-                if (peek().type !== 'rparen') {
-                    args.push(parseExpr());
-                    while (peek().type === 'comma') { next(); args.push(parseExpr()); }
-                }
-                expect('rparen');
-                return new Call(name, args);
-            }
             return { evaluate: env => { if (!(name in env)) throw new Error(`Undefined variable: ${name}`); return env[name]; } };
         }
         if (t.type === 'lparen') { next(); const e = parseExpr(); expect('rparen'); return e; }
