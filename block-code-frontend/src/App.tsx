@@ -1,94 +1,102 @@
 import { useState } from "react";
+import type { DragEvent } from "react";
 import "./App.css";
 
 type DataType = "int" | "float" | "bool" | "string";
 type MathOperator = "+" | "-" | "*" | "/" | "%";
 type LogicOperator = "==" | "!=" | ">" | "<" | ">=" | "<=" | "and" | "or";
 
-type ExpressionBlock =
-  | {
-      id: number;
-      type: "calculation";
-      left: string;
-      operator: MathOperator;
-      right: string;
-    }
-  | {
-      id: number;
-      type: "logic";
-      left: string;
-      operator: LogicOperator;
-      right: string;
-    }
-  | {
-      id: number;
-      type: "call";
-      functionId: number;
-      name: string;
-      paramNames: string[];
-      args: string[];
-    };
+type LiteralExpression = {
+  id: number;
+  type: "literal";
+  dataType: DataType;
+  value: string | number | boolean;
+  source: string;
+  valid: boolean;
+  error?: string;
+};
 
-type ReturnValue = string | ExpressionBlock;
+type VariableReferenceExpression = {
+  id: number;
+  type: "variableReference";
+  name: string;
+  source: string;
+  valid: true;
+};
+
+type CalculationExpression = {
+  id: number;
+  type: "calculation";
+  left: Expression;
+  operator: MathOperator;
+  right: Expression;
+};
+
+type LogicExpression = {
+  id: number;
+  type: "logic";
+  left: Expression;
+  operator: LogicOperator;
+  right: Expression;
+};
+
+type CallExpression = {
+  id: number;
+  type: "call";
+  functionId: number;
+  name: string;
+  paramNames: string[];
+  args: Expression[];
+};
+
+type Expression =
+  | LiteralExpression
+  | VariableReferenceExpression
+  | CalculationExpression
+  | LogicExpression
+  | CallExpression;
+
+type ExpressionStatementBlock =
+  | CalculationExpression
+  | LogicExpression
+  | CallExpression;
 
 type Block =
   | {
       id: number;
       type: "variable";
-      dataType: DataType;
       name: string;
-      value: string;
+      value: Expression;
     }
-  | {
-      id: number;
-      type: "calculation";
-      left: string;
-      operator: MathOperator;
-      right: string;
-    }
-  | {
-      id: number;
-      type: "logic";
-      left: string;
-      operator: LogicOperator;
-      right: string;
-    }
+  | ExpressionStatementBlock
   | {
       id: number;
       type: "print";
-      value: string;
+      value: Expression;
     }
   | {
       id: number;
       type: "return";
-      value: ReturnValue;
-    }
-  | {
-      id: number;
-      type: "call";
-      functionId: number;
-      name: string;
-      paramNames: string[];
-      args: string[];
+      value: Expression;
     }
   | {
       id: number;
       type: "if";
-      condition: string;
+      condition: Expression;
       children: Block[];
     }
   | {
       id: number;
       type: "while";
-      condition: string;
+      condition: Expression;
       children: Block[];
     }
   | {
       id: number;
       type: "for";
       variable: string;
-      start: string;
-      end: string;
+      start: Expression;
+      end: Expression;
       children: Block[];
     }
   | {
@@ -129,13 +137,1225 @@ type ListDropTarget =
       index: number;
     };
 
-type ReturnDropTarget = {
-  area: "returnValue";
-  parentId: number;
+type ExpressionDropTarget = {
+  area: "expression";
+  expressionId: number;
 };
 
-type DropTarget = ListDropTarget | ReturnDropTarget;
+type DropTarget = ListDropTarget | ExpressionDropTarget;
 type ListArea = ListDropTarget["area"];
+
+type JsonExpression =
+  | {
+      id: number;
+      type: "literal";
+      dataType: DataType;
+      value: string | number | boolean;
+    }
+  | {
+      id: number;
+      type: "variableReference";
+      name: string;
+    }
+  | {
+      id: number;
+      type: "calculation";
+      left: JsonExpression;
+      operator: MathOperator;
+      right: JsonExpression;
+    }
+  | {
+      id: number;
+      type: "logic";
+      left: JsonExpression;
+      operator: LogicOperator;
+      right: JsonExpression;
+    }
+  | {
+      id: number;
+      type: "call";
+      functionId: number;
+      name: string;
+      paramNames: string[];
+      args: JsonExpression[];
+    };
+
+type JsonCondition = string | JsonExpression;
+
+type JsonBlock =
+  | {
+      id: number;
+      type: "variable";
+      name: string;
+      value: JsonExpression;
+    }
+  | Extract<JsonExpression, { type: "calculation" | "logic" | "call" }>
+  | {
+      id: number;
+      type: "print";
+      value: JsonExpression;
+    }
+  | {
+      id: number;
+      type: "return";
+      value: JsonExpression;
+    }
+  | {
+      id: number;
+      type: "if";
+      condition: JsonCondition;
+      children: JsonBlock[];
+    }
+  | {
+      id: number;
+      type: "while";
+      condition: JsonCondition;
+      children: JsonBlock[];
+    }
+  | {
+      id: number;
+      type: "for";
+      variable: string;
+      start: JsonExpression;
+      end: JsonExpression;
+      children: JsonBlock[];
+    }
+  | {
+      id: number;
+      type: "tryCatch";
+      catchErrorName: string;
+      tryChildren: JsonBlock[];
+      catchChildren: JsonBlock[];
+    };
+
+let idCounter = 0;
+
+function makeId() {
+  idCounter += 1;
+  return Date.now() * 1000 + idCounter;
+}
+
+function decodeQuotedString(source: string, quote: "'" | '"') {
+  const body = source.slice(1, -1);
+
+  return body.replace(/\\([\\'"nrt])/g, (_, escaped: string) => {
+    if (escaped === "n") return "\n";
+    if (escaped === "r") return "\r";
+    if (escaped === "t") return "\t";
+    if (escaped === quote) return quote;
+    return escaped;
+  });
+}
+
+function createAtomicExpression(source = "", id = makeId()): Expression {
+  const trimmed = source.trim();
+
+  if (trimmed === "") {
+    return {
+      id,
+      type: "literal",
+      dataType: "string",
+      value: "",
+      source,
+      valid: true,
+    };
+  }
+
+  const firstCharacter = trimmed[0];
+
+  if (firstCharacter === '"' || firstCharacter === "'") {
+    const quote = firstCharacter as "'" | '"';
+    const isClosed = trimmed.length >= 2 && trimmed.at(-1) === quote;
+
+    if (isClosed) {
+      return {
+        id,
+        type: "literal",
+        dataType: "string",
+        value: decodeQuotedString(trimmed, quote),
+        source,
+        valid: true,
+      };
+    }
+
+    return {
+      id,
+      type: "literal",
+      dataType: "string",
+      value: trimmed.slice(1),
+      source,
+      valid: false,
+      error: `Close the string with ${quote}.`,
+    };
+  }
+
+  if (/^[+-]?\d+$/.test(trimmed)) {
+    return {
+      id,
+      type: "literal",
+      dataType: "int",
+      value: Number(trimmed),
+      source,
+      valid: true,
+    };
+  }
+
+  if (
+    /^[+-]?(?:(?:\d+\.\d*)|(?:\.\d+)|(?:\d+[eE][+-]?\d+)|(?:\d+\.\d*[eE][+-]?\d+)|(?:\.\d+[eE][+-]?\d+))$/.test(
+      trimmed
+    )
+  ) {
+    return {
+      id,
+      type: "literal",
+      dataType: "float",
+      value: Number(trimmed),
+      source,
+      valid: true,
+    };
+  }
+
+  if (trimmed.toLowerCase() === "true" || trimmed.toLowerCase() === "false") {
+    return {
+      id,
+      type: "literal",
+      dataType: "bool",
+      value: trimmed.toLowerCase() === "true",
+      source,
+      valid: true,
+    };
+  }
+
+  if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(trimmed)) {
+    return {
+      id,
+      type: "variableReference",
+      name: trimmed,
+      source,
+      valid: true,
+    };
+  }
+
+  return {
+    id,
+    type: "literal",
+    dataType: "string",
+    value: source,
+    source,
+    valid: false,
+    error: "Strings need matching single or double quotation marks.",
+  };
+}
+
+function createConditionExpression(
+  source = "",
+  id = makeId()
+): LiteralExpression {
+  return {
+    id,
+    type: "literal",
+    dataType: "string",
+    value: source,
+    source,
+    valid: true,
+  };
+}
+
+function sanitizeIdentifierInput(value: string) {
+  return value.replace(/\s+/g, "");
+}
+
+function createCalculationExpression(id = makeId()): CalculationExpression {
+  return {
+    id,
+    type: "calculation",
+    left: createAtomicExpression(),
+    operator: "+",
+    right: createAtomicExpression(),
+  };
+}
+
+function createLogicExpression(id = makeId()): LogicExpression {
+  return {
+    id,
+    type: "logic",
+    left: createAtomicExpression(),
+    operator: "==",
+    right: createAtomicExpression(),
+  };
+}
+
+function createCallExpression(func: UserFunction): CallExpression {
+  return {
+    id: makeId(),
+    type: "call",
+    functionId: func.id,
+    name: func.name,
+    paramNames: [...func.params],
+    args: func.params.map(() => createAtomicExpression()),
+  };
+}
+
+function createBlock(type: BlockType): Block {
+  const id = makeId();
+
+  switch (type) {
+    case "variable":
+      return {
+        id,
+        type: "variable",
+        name: "",
+        value: createAtomicExpression(),
+      };
+
+    case "calculation":
+      return createCalculationExpression(id);
+
+    case "logic":
+      return createLogicExpression(id);
+
+    case "print":
+      return {
+        id,
+        type: "print",
+        value: createAtomicExpression(),
+      };
+
+    case "return":
+      return {
+        id,
+        type: "return",
+        value: createAtomicExpression(),
+      };
+
+    case "if":
+      return {
+        id,
+        type: "if",
+        condition: createConditionExpression(),
+        children: [],
+      };
+
+    case "while":
+      return {
+        id,
+        type: "while",
+        condition: createConditionExpression(),
+        children: [],
+      };
+
+    case "for":
+      return {
+        id,
+        type: "for",
+        variable: "i",
+        start: createAtomicExpression("0"),
+        end: createAtomicExpression("10"),
+        children: [],
+      };
+
+    case "tryCatch":
+      return {
+        id,
+        type: "tryCatch",
+        catchErrorName: "error",
+        tryChildren: [],
+        catchChildren: [],
+      };
+
+    case "call":
+      return {
+        id,
+        type: "call",
+        functionId: -1,
+        name: "function",
+        paramNames: [],
+        args: [],
+      };
+  }
+}
+
+function isAtomicExpression(expression: Expression): expression is LiteralExpression | VariableReferenceExpression {
+  return expression.type === "literal" || expression.type === "variableReference";
+}
+
+function isExpressionStatement(expression: Expression): expression is ExpressionStatementBlock {
+  return (
+    expression.type === "calculation" ||
+    expression.type === "logic" ||
+    expression.type === "call"
+  );
+}
+
+function isExpressionStatementBlock(block: Block): block is ExpressionStatementBlock {
+  return (
+    block.type === "calculation" ||
+    block.type === "logic" ||
+    block.type === "call"
+  );
+}
+
+function expressionContainsId(expression: Expression, id: number): boolean {
+  if (expression.id === id) return true;
+
+  if (expression.type === "calculation" || expression.type === "logic") {
+    return (
+      expressionContainsId(expression.left, id) ||
+      expressionContainsId(expression.right, id)
+    );
+  }
+
+  if (expression.type === "call") {
+    return expression.args.some((argument) => expressionContainsId(argument, id));
+  }
+
+  return false;
+}
+
+function findExpressionById(expression: Expression, id: number): Expression | null {
+  if (expression.id === id) return expression;
+
+  if (expression.type === "calculation" || expression.type === "logic") {
+    return (
+      findExpressionById(expression.left, id) ??
+      findExpressionById(expression.right, id)
+    );
+  }
+
+  if (expression.type === "call") {
+    for (const argument of expression.args) {
+      const found = findExpressionById(argument, id);
+      if (found) return found;
+    }
+  }
+
+  return null;
+}
+
+function updateExpressionById(
+  expression: Expression,
+  id: number,
+  updater: (current: Expression) => Expression
+): Expression {
+  if (expression.id === id) return updater(expression);
+
+  if (expression.type === "calculation") {
+    return {
+      ...expression,
+      left: updateExpressionById(expression.left, id, updater),
+      right: updateExpressionById(expression.right, id, updater),
+    };
+  }
+
+  if (expression.type === "logic") {
+    return {
+      ...expression,
+      left: updateExpressionById(expression.left, id, updater),
+      right: updateExpressionById(expression.right, id, updater),
+    };
+  }
+
+  if (expression.type === "call") {
+    return {
+      ...expression,
+      args: expression.args.map((argument) =>
+        updateExpressionById(argument, id, updater)
+      ),
+    };
+  }
+
+  return expression;
+}
+
+function findExpressionInBlock(block: Block, id: number): Expression | null {
+  if (isExpressionStatementBlock(block)) {
+    const found = findExpressionById(block, id);
+    if (found) return found;
+  }
+
+  switch (block.type) {
+    case "variable":
+    case "print":
+    case "return":
+      return findExpressionById(block.value, id);
+
+    case "if": {
+      const inCondition = findExpressionById(block.condition, id);
+      if (inCondition) return inCondition;
+      return findExpressionInBlocks(block.children, id);
+    }
+
+    case "while": {
+      const inCondition = findExpressionById(block.condition, id);
+      if (inCondition) return inCondition;
+      return findExpressionInBlocks(block.children, id);
+    }
+
+    case "for": {
+      const inStart = findExpressionById(block.start, id);
+      if (inStart) return inStart;
+      const inEnd = findExpressionById(block.end, id);
+      if (inEnd) return inEnd;
+      return findExpressionInBlocks(block.children, id);
+    }
+
+    case "tryCatch":
+      return (
+        findExpressionInBlocks(block.tryChildren, id) ??
+        findExpressionInBlocks(block.catchChildren, id)
+      );
+
+    default:
+      return null;
+  }
+}
+
+function findExpressionInBlocks(blocks: Block[], id: number): Expression | null {
+  for (const block of blocks) {
+    const found = findExpressionInBlock(block, id);
+    if (found) return found;
+  }
+
+  return null;
+}
+
+function updateExpressionsInBlock(
+  block: Block,
+  id: number,
+  updater: (current: Expression) => Expression
+): Block {
+  if (isExpressionStatementBlock(block)) {
+    const updated = updateExpressionById(block, id, updater);
+    return isExpressionStatement(updated) ? updated : block;
+  }
+
+  switch (block.type) {
+    case "variable":
+      return {
+        ...block,
+        value: updateExpressionById(block.value, id, updater),
+      };
+
+    case "print":
+      return {
+        ...block,
+        value: updateExpressionById(block.value, id, updater),
+      };
+
+    case "return":
+      return {
+        ...block,
+        value: updateExpressionById(block.value, id, updater),
+      };
+
+    case "if":
+      return {
+        ...block,
+        condition: updateExpressionById(block.condition, id, updater),
+        children: updateExpressionsInBlocks(block.children, id, updater),
+      };
+
+    case "while":
+      return {
+        ...block,
+        condition: updateExpressionById(block.condition, id, updater),
+        children: updateExpressionsInBlocks(block.children, id, updater),
+      };
+
+    case "for":
+      return {
+        ...block,
+        start: updateExpressionById(block.start, id, updater),
+        end: updateExpressionById(block.end, id, updater),
+        children: updateExpressionsInBlocks(block.children, id, updater),
+      };
+
+    case "tryCatch":
+      return {
+        ...block,
+        tryChildren: updateExpressionsInBlocks(block.tryChildren, id, updater),
+        catchChildren: updateExpressionsInBlocks(
+          block.catchChildren,
+          id,
+          updater
+        ),
+      };
+  }
+}
+
+function updateExpressionsInBlocks(
+  blocks: Block[],
+  id: number,
+  updater: (current: Expression) => Expression
+): Block[] {
+  return blocks.map((block) => updateExpressionsInBlock(block, id, updater));
+}
+
+function blockContainsExpressionId(block: Block, id: number): boolean {
+  return findExpressionInBlock(block, id) !== null;
+}
+
+function blockContainsBlockId(block: Block, id: number): boolean {
+  if (block.id === id) return true;
+
+  if (block.type === "if" || block.type === "while" || block.type === "for") {
+    return block.children.some((child) => blockContainsBlockId(child, id));
+  }
+
+  if (block.type === "tryCatch") {
+    return (
+      block.tryChildren.some((child) => blockContainsBlockId(child, id)) ||
+      block.catchChildren.some((child) => blockContainsBlockId(child, id))
+    );
+  }
+
+  return false;
+}
+
+function insertIntoBlocks(
+  blockList: Block[],
+  target: ListDropTarget,
+  newBlock: Block
+): Block[] {
+  if (target.area === "root") {
+    const updated = [...blockList];
+    updated.splice(target.index, 0, newBlock);
+    return updated;
+  }
+
+  return blockList.map((block) => {
+    if (block.id === target.parentId) {
+      if (
+        target.area === "children" &&
+        (block.type === "if" || block.type === "while" || block.type === "for")
+      ) {
+        const children = [...block.children];
+        children.splice(target.index, 0, newBlock);
+        return { ...block, children };
+      }
+
+      if (target.area === "tryChildren" && block.type === "tryCatch") {
+        const tryChildren = [...block.tryChildren];
+        tryChildren.splice(target.index, 0, newBlock);
+        return { ...block, tryChildren };
+      }
+
+      if (target.area === "catchChildren" && block.type === "tryCatch") {
+        const catchChildren = [...block.catchChildren];
+        catchChildren.splice(target.index, 0, newBlock);
+        return { ...block, catchChildren };
+      }
+    }
+
+    if (block.type === "if" || block.type === "while" || block.type === "for") {
+      return {
+        ...block,
+        children: insertIntoBlocks(block.children, target, newBlock),
+      };
+    }
+
+    if (block.type === "tryCatch") {
+      return {
+        ...block,
+        tryChildren: insertIntoBlocks(block.tryChildren, target, newBlock),
+        catchChildren: insertIntoBlocks(block.catchChildren, target, newBlock),
+      };
+    }
+
+    return block;
+  });
+}
+
+function removeBlockById(
+  blockList: Block[],
+  id: number
+): { updatedBlocks: Block[]; removedBlock: Block | null } {
+  let removedBlock: Block | null = null;
+
+  const updatedBlocks = blockList
+    .map((block) => {
+      if (block.id === id) {
+        removedBlock = block;
+        return null;
+      }
+
+      if (block.type === "if" || block.type === "while" || block.type === "for") {
+        const result = removeBlockById(block.children, id);
+        if (result.removedBlock) removedBlock = result.removedBlock;
+        return { ...block, children: result.updatedBlocks };
+      }
+
+      if (block.type === "tryCatch") {
+        const tryResult = removeBlockById(block.tryChildren, id);
+        const catchResult = removeBlockById(block.catchChildren, id);
+
+        if (tryResult.removedBlock) removedBlock = tryResult.removedBlock;
+        if (catchResult.removedBlock) removedBlock = catchResult.removedBlock;
+
+        return {
+          ...block,
+          tryChildren: tryResult.updatedBlocks,
+          catchChildren: catchResult.updatedBlocks,
+        };
+      }
+
+      return block;
+    })
+    .filter((block): block is Block => block !== null);
+
+  return { updatedBlocks, removedBlock };
+}
+
+function findBlockById(blockList: Block[], id: number): Block | null {
+  for (const block of blockList) {
+    if (block.id === id) return block;
+
+    if (block.type === "if" || block.type === "while" || block.type === "for") {
+      const found = findBlockById(block.children, id);
+      if (found) return found;
+    }
+
+    if (block.type === "tryCatch") {
+      const inTry = findBlockById(block.tryChildren, id);
+      if (inTry) return inTry;
+
+      const inCatch = findBlockById(block.catchChildren, id);
+      if (inCatch) return inCatch;
+    }
+  }
+
+  return null;
+}
+
+function findBlockLocation(
+  blockList: Block[],
+  id: number,
+  area: ListArea = "root",
+  parentId?: number
+): ListDropTarget | null {
+  for (let index = 0; index < blockList.length; index += 1) {
+    const block = blockList[index];
+
+    if (block.id === id) {
+      if (area === "root") return { area: "root", index };
+      return { area, parentId: parentId as number, index };
+    }
+
+    if (block.type === "if" || block.type === "while" || block.type === "for") {
+      const found = findBlockLocation(block.children, id, "children", block.id);
+      if (found) return found;
+    }
+
+    if (block.type === "tryCatch") {
+      const inTry = findBlockLocation(
+        block.tryChildren,
+        id,
+        "tryChildren",
+        block.id
+      );
+      if (inTry) return inTry;
+
+      const inCatch = findBlockLocation(
+        block.catchChildren,
+        id,
+        "catchChildren",
+        block.id
+      );
+      if (inCatch) return inCatch;
+    }
+  }
+
+  return null;
+}
+
+function isSameListTarget(source: ListDropTarget, target: ListDropTarget) {
+  if (source.area !== target.area) return false;
+  if (source.area === "root" && target.area === "root") return true;
+
+  return (
+    "parentId" in source &&
+    "parentId" in target &&
+    source.parentId === target.parentId
+  );
+}
+
+function adjustTargetAfterRemoval(
+  blockList: Block[],
+  blockId: number,
+  target: ListDropTarget
+): ListDropTarget {
+  const sourceLocation = findBlockLocation(blockList, blockId);
+
+  if (
+    sourceLocation &&
+    isSameListTarget(sourceLocation, target) &&
+    sourceLocation.index < target.index
+  ) {
+    return { ...target, index: target.index - 1 };
+  }
+
+  return target;
+}
+
+function syncExpressionFunctionCalls(
+  expression: Expression,
+  functionId: number,
+  nextName: string,
+  nextParams: string[]
+): Expression {
+  if (expression.type === "calculation") {
+    return {
+      ...expression,
+      left: syncExpressionFunctionCalls(
+        expression.left,
+        functionId,
+        nextName,
+        nextParams
+      ),
+      right: syncExpressionFunctionCalls(
+        expression.right,
+        functionId,
+        nextName,
+        nextParams
+      ),
+    };
+  }
+
+  if (expression.type === "logic") {
+    return {
+      ...expression,
+      left: syncExpressionFunctionCalls(
+        expression.left,
+        functionId,
+        nextName,
+        nextParams
+      ),
+      right: syncExpressionFunctionCalls(
+        expression.right,
+        functionId,
+        nextName,
+        nextParams
+      ),
+    };
+  }
+
+  if (expression.type === "call") {
+    const recursivelyUpdatedArgs = expression.args.map((argument) =>
+      syncExpressionFunctionCalls(argument, functionId, nextName, nextParams)
+    );
+
+    if (expression.functionId !== functionId) {
+      return { ...expression, args: recursivelyUpdatedArgs };
+    }
+
+    return {
+      ...expression,
+      name: nextName,
+      paramNames: [...nextParams],
+      args: nextParams.map(
+        (_, index) => recursivelyUpdatedArgs[index] ?? createAtomicExpression()
+      ),
+    };
+  }
+
+  return expression;
+}
+
+function syncFunctionCalls(
+  blockList: Block[],
+  functionId: number,
+  nextName: string,
+  nextParams: string[]
+): Block[] {
+  return blockList.map((block) => {
+    if (isExpressionStatementBlock(block)) {
+      return syncExpressionFunctionCalls(
+        block,
+        functionId,
+        nextName,
+        nextParams
+      ) as ExpressionStatementBlock;
+    }
+
+    switch (block.type) {
+      case "variable":
+      case "print":
+      case "return":
+        return {
+          ...block,
+          value: syncExpressionFunctionCalls(
+            block.value,
+            functionId,
+            nextName,
+            nextParams
+          ),
+        };
+
+      case "if":
+        return {
+          ...block,
+          condition: syncExpressionFunctionCalls(
+            block.condition,
+            functionId,
+            nextName,
+            nextParams
+          ),
+          children: syncFunctionCalls(
+            block.children,
+            functionId,
+            nextName,
+            nextParams
+          ),
+        };
+
+      case "while":
+        return {
+          ...block,
+          condition: syncExpressionFunctionCalls(
+            block.condition,
+            functionId,
+            nextName,
+            nextParams
+          ),
+          children: syncFunctionCalls(
+            block.children,
+            functionId,
+            nextName,
+            nextParams
+          ),
+        };
+
+      case "for":
+        return {
+          ...block,
+          start: syncExpressionFunctionCalls(
+            block.start,
+            functionId,
+            nextName,
+            nextParams
+          ),
+          end: syncExpressionFunctionCalls(
+            block.end,
+            functionId,
+            nextName,
+            nextParams
+          ),
+          children: syncFunctionCalls(
+            block.children,
+            functionId,
+            nextName,
+            nextParams
+          ),
+        };
+
+      case "tryCatch":
+        return {
+          ...block,
+          tryChildren: syncFunctionCalls(
+            block.tryChildren,
+            functionId,
+            nextName,
+            nextParams
+          ),
+          catchChildren: syncFunctionCalls(
+            block.catchChildren,
+            functionId,
+            nextName,
+            nextParams
+          ),
+        };
+    }
+  });
+}
+
+function removeFunctionCallsFromExpression(
+  expression: Expression,
+  functionId: number
+): Expression {
+  if (expression.type === "call" && expression.functionId === functionId) {
+    return createAtomicExpression();
+  }
+
+  if (expression.type === "calculation") {
+    return {
+      ...expression,
+      left: removeFunctionCallsFromExpression(expression.left, functionId),
+      right: removeFunctionCallsFromExpression(expression.right, functionId),
+    };
+  }
+
+  if (expression.type === "logic") {
+    return {
+      ...expression,
+      left: removeFunctionCallsFromExpression(expression.left, functionId),
+      right: removeFunctionCallsFromExpression(expression.right, functionId),
+    };
+  }
+
+  if (expression.type === "call") {
+    return {
+      ...expression,
+      args: expression.args.map((argument) =>
+        removeFunctionCallsFromExpression(argument, functionId)
+      ),
+    };
+  }
+
+  return expression;
+}
+
+function removeFunctionCalls(blockList: Block[], functionId: number): Block[] {
+  return blockList
+    .filter(
+      (block) => !(block.type === "call" && block.functionId === functionId)
+    )
+    .map((block) => {
+      if (isExpressionStatementBlock(block)) {
+        return removeFunctionCallsFromExpression(
+          block,
+          functionId
+        ) as ExpressionStatementBlock;
+      }
+
+      switch (block.type) {
+        case "variable":
+        case "print":
+        case "return":
+          return {
+            ...block,
+            value: removeFunctionCallsFromExpression(block.value, functionId),
+          };
+
+        case "if":
+          return {
+            ...block,
+            condition: removeFunctionCallsFromExpression(
+              block.condition,
+              functionId
+            ),
+            children: removeFunctionCalls(block.children, functionId),
+          };
+
+        case "while":
+          return {
+            ...block,
+            condition: removeFunctionCallsFromExpression(
+              block.condition,
+              functionId
+            ),
+            children: removeFunctionCalls(block.children, functionId),
+          };
+
+        case "for":
+          return {
+            ...block,
+            start: removeFunctionCallsFromExpression(block.start, functionId),
+            end: removeFunctionCallsFromExpression(block.end, functionId),
+            children: removeFunctionCalls(block.children, functionId),
+          };
+
+        case "tryCatch":
+          return {
+            ...block,
+            tryChildren: removeFunctionCalls(block.tryChildren, functionId),
+            catchChildren: removeFunctionCalls(
+              block.catchChildren,
+              functionId
+            ),
+          };
+      }
+    });
+}
+
+function serializeExpression(expression: Expression): JsonExpression {
+  switch (expression.type) {
+    case "literal":
+      return {
+        id: expression.id,
+        type: "literal",
+        dataType: expression.dataType,
+        value: expression.value,
+      };
+
+    case "variableReference":
+      return {
+        id: expression.id,
+        type: "variableReference",
+        name: expression.name,
+      };
+
+    case "calculation":
+      return {
+        id: expression.id,
+        type: "calculation",
+        left: serializeExpression(expression.left),
+        operator: expression.operator,
+        right: serializeExpression(expression.right),
+      };
+
+    case "logic":
+      return {
+        id: expression.id,
+        type: "logic",
+        left: serializeExpression(expression.left),
+        operator: expression.operator,
+        right: serializeExpression(expression.right),
+      };
+
+    case "call":
+      return {
+        id: expression.id,
+        type: "call",
+        functionId: expression.functionId,
+        name: expression.name,
+        paramNames: [...expression.paramNames],
+        args: expression.args.map(serializeExpression),
+      };
+  }
+}
+
+function serializeCondition(condition: Expression): JsonCondition {
+  if (isAtomicExpression(condition)) return condition.source.trim();
+  return serializeExpression(condition);
+}
+
+function serializeBlock(block: Block): JsonBlock {
+  if (isExpressionStatementBlock(block)) {
+    return serializeExpression(block) as Extract<
+      JsonExpression,
+      { type: "calculation" | "logic" | "call" }
+    >;
+  }
+
+  switch (block.type) {
+    case "variable":
+      return {
+        id: block.id,
+        type: "variable",
+        name: block.name,
+        value: serializeExpression(block.value),
+      };
+
+    case "print":
+      return {
+        id: block.id,
+        type: "print",
+        value: serializeExpression(block.value),
+      };
+
+    case "return":
+      return {
+        id: block.id,
+        type: "return",
+        value: serializeExpression(block.value),
+      };
+
+    case "if":
+      return {
+        id: block.id,
+        type: "if",
+        condition: serializeCondition(block.condition),
+        children: block.children.map(serializeBlock),
+      };
+
+    case "while":
+      return {
+        id: block.id,
+        type: "while",
+        condition: serializeCondition(block.condition),
+        children: block.children.map(serializeBlock),
+      };
+
+    case "for":
+      return {
+        id: block.id,
+        type: "for",
+        variable: block.variable,
+        start: serializeExpression(block.start),
+        end: serializeExpression(block.end),
+        children: block.children.map(serializeBlock),
+      };
+
+    case "tryCatch":
+      return {
+        id: block.id,
+        type: "tryCatch",
+        catchErrorName: block.catchErrorName,
+        tryChildren: block.tryChildren.map(serializeBlock),
+        catchChildren: block.catchChildren.map(serializeBlock),
+      };
+  }
+}
+
+function collectExpressionErrors(
+  expression: Expression,
+  location: string,
+  errors: string[]
+) {
+  if (expression.type === "literal") {
+    if (!expression.valid && expression.source.trim() !== "") {
+      errors.push(`${location}: ${expression.error ?? "Invalid value."}`);
+    }
+    return;
+  }
+
+  if (expression.type === "variableReference") return;
+
+  if (expression.type === "calculation" || expression.type === "logic") {
+    collectExpressionErrors(expression.left, `${location}.left`, errors);
+    collectExpressionErrors(expression.right, `${location}.right`, errors);
+    return;
+  }
+
+  expression.args.forEach((argument, index) =>
+    collectExpressionErrors(argument, `${location}.args[${index}]`, errors)
+  );
+}
+
+function collectBlockErrors(block: Block, location: string, errors: string[]) {
+  if (isExpressionStatementBlock(block)) {
+    collectExpressionErrors(block, location, errors);
+    return;
+  }
+
+  switch (block.type) {
+    case "variable":
+    case "print":
+    case "return":
+      collectExpressionErrors(block.value, `${location}.value`, errors);
+      return;
+
+    case "if":
+    case "while":
+      if (!isAtomicExpression(block.condition)) {
+        collectExpressionErrors(block.condition, `${location}.condition`, errors);
+      }
+      block.children.forEach((child, index) =>
+        collectBlockErrors(child, `${location}.children[${index}]`, errors)
+      );
+      return;
+
+    case "for":
+      collectExpressionErrors(block.start, `${location}.start`, errors);
+      collectExpressionErrors(block.end, `${location}.end`, errors);
+      block.children.forEach((child, index) =>
+        collectBlockErrors(child, `${location}.children[${index}]`, errors)
+      );
+      return;
+
+    case "tryCatch":
+      block.tryChildren.forEach((child, index) =>
+        collectBlockErrors(child, `${location}.tryChildren[${index}]`, errors)
+      );
+      block.catchChildren.forEach((child, index) =>
+        collectBlockErrors(
+          child,
+          `${location}.catchChildren[${index}]`,
+          errors
+        )
+      );
+  }
+}
 
 function App() {
   const [blocks, setBlocks] = useState<Block[]>([]);
@@ -164,626 +1384,49 @@ function App() {
 
   const currentBlocks = editingFunction ? editingFunction.children : blocks;
 
-  function makeId() {
-    return Date.now() + Math.floor(Math.random() * 1000);
-  }
+  const programJson = {
+    functions: functions.map((func) => ({
+      id: func.id,
+      type: "def" as const,
+      name: func.name,
+      params: [...func.params],
+      children: func.children.map(serializeBlock),
+    })),
+    blocks: blocks.map(serializeBlock),
+  };
 
   function getInputWidth(value: string, minWidth = 72, maxWidth = 240) {
     const textLength = value.length === 0 ? 4 : value.length;
-    const calculatedWidth = textLength * 8 + 18;
+    const calculatedWidth = textLength * 8 + 20;
     return Math.min(Math.max(minWidth, calculatedWidth), maxWidth);
   }
 
-  function setCurrentBlocks(updater: Block[] | ((prev: Block[]) => Block[])) {
+  function setCurrentBlocks(updater: Block[] | ((previous: Block[]) => Block[])) {
     if (editingFunction) {
-      setFunctions((prev) =>
-        prev.map((func) => {
+      setFunctions((previous) =>
+        previous.map((func) => {
           if (func.id !== editingFunction.id) return func;
-
-          const nextChildren =
-            typeof updater === "function" ? updater(func.children) : updater;
 
           return {
             ...func,
-            children: nextChildren,
+            children:
+              typeof updater === "function"
+                ? updater(func.children)
+                : updater,
           };
         })
       );
-
       return;
     }
 
     setBlocks(updater);
   }
 
-  function createBlock(type: BlockType): Block {
-    const id = makeId();
-
-    if (type === "variable") {
-      return {
-        id,
-        type: "variable",
-        dataType: "int",
-        name: "",
-        value: "",
-      };
-    }
-
-    if (type === "calculation") {
-      return {
-        id,
-        type: "calculation",
-        left: "",
-        operator: "+",
-        right: "",
-      };
-    }
-
-    if (type === "logic") {
-      return {
-        id,
-        type: "logic",
-        left: "",
-        operator: "==",
-        right: "",
-      };
-    }
-
-    if (type === "print") {
-      return {
-        id,
-        type: "print",
-        value: "",
-      };
-    }
-
-    if (type === "return") {
-      return {
-        id,
-        type: "return",
-        value: "",
-      };
-    }
-
-    if (type === "if") {
-      return {
-        id,
-        type: "if",
-        condition: "",
-        children: [],
-      };
-    }
-
-    if (type === "while") {
-      return {
-        id,
-        type: "while",
-        condition: "",
-        children: [],
-      };
-    }
-
-    if (type === "for") {
-      return {
-        id,
-        type: "for",
-        variable: "i",
-        start: "0",
-        end: "10",
-        children: [],
-      };
-    }
-
-    if (type === "tryCatch") {
-      return {
-        id,
-        type: "tryCatch",
-        catchErrorName: "error",
-        tryChildren: [],
-        catchChildren: [],
-      };
-    }
-
-    return {
-      id,
-      type: "call",
-      functionId: -1,
-      name: "function",
-      paramNames: [],
-      args: [],
-    };
-  }
-
-  function getDropTargetKey(target: DropTarget) {
-    if (target.area === "root") {
-      return `root-${target.index}`;
-    }
-
-    if (target.area === "returnValue") {
-      return `returnValue-${target.parentId}`;
-    }
-
-    return `${target.area}-${target.parentId}-${target.index}`;
-  }
-
-  function isExpressionBlock(value: ReturnValue): value is ExpressionBlock {
-    return (
-      typeof value !== "string" &&
-      (value.type === "calculation" ||
-        value.type === "logic" ||
-        value.type === "call")
-    );
-  }
-
-  function canUseAsReturnValue(block: Block): block is ExpressionBlock {
-    return (
-      block.type === "calculation" ||
-      block.type === "logic" ||
-      block.type === "call"
-    );
-  }
-
-  function insertIntoBlocks(
-    blockList: Block[],
-    target: DropTarget,
-    newBlock: Block
-  ): Block[] {
-    if (target.area === "root") {
-      const updated = [...blockList];
-      updated.splice(target.index, 0, newBlock);
-      return updated;
-    }
-
-    return blockList.map((block) => {
-      if (
-        target.area === "returnValue" &&
-        block.id === target.parentId &&
-        block.type === "return" &&
-        canUseAsReturnValue(newBlock)
-      ) {
-        return {
-          ...block,
-          value: newBlock,
-        };
-      }
-
-      if (target.area !== "returnValue" && block.id === target.parentId) {
-        if (
-          target.area === "children" &&
-          (block.type === "if" ||
-            block.type === "while" ||
-            block.type === "for")
-        ) {
-          const updatedChildren = [...block.children];
-          updatedChildren.splice(target.index, 0, newBlock);
-
-          return {
-            ...block,
-            children: updatedChildren,
-          };
-        }
-
-        if (target.area === "tryChildren" && block.type === "tryCatch") {
-          const updatedTryChildren = [...block.tryChildren];
-          updatedTryChildren.splice(target.index, 0, newBlock);
-
-          return {
-            ...block,
-            tryChildren: updatedTryChildren,
-          };
-        }
-
-        if (target.area === "catchChildren" && block.type === "tryCatch") {
-          const updatedCatchChildren = [...block.catchChildren];
-          updatedCatchChildren.splice(target.index, 0, newBlock);
-
-          return {
-            ...block,
-            catchChildren: updatedCatchChildren,
-          };
-        }
-      }
-
-      if (
-        block.type === "if" ||
-        block.type === "while" ||
-        block.type === "for"
-      ) {
-        return {
-          ...block,
-          children: insertIntoBlocks(block.children, target, newBlock),
-        };
-      }
-
-      if (block.type === "tryCatch") {
-        return {
-          ...block,
-          tryChildren: insertIntoBlocks(block.tryChildren, target, newBlock),
-          catchChildren: insertIntoBlocks(block.catchChildren, target, newBlock),
-        };
-      }
-
-      return block;
-    });
-  }
-
-  function removeBlockById(
-    blockList: Block[],
-    id: number
-  ): { updatedBlocks: Block[]; removedBlock: Block | null } {
-    let removedBlock: Block | null = null;
-
-    const updatedBlocks = blockList
-      .map((block) => {
-        if (block.id === id) {
-          removedBlock = block;
-          return null;
-        }
-
-        if (
-          block.type === "return" &&
-          isExpressionBlock(block.value) &&
-          block.value.id === id
-        ) {
-          removedBlock = block.value as Block;
-
-          return {
-            ...block,
-            value: "",
-          };
-        }
-
-        if (
-          block.type === "if" ||
-          block.type === "while" ||
-          block.type === "for"
-        ) {
-          const result = removeBlockById(block.children, id);
-
-          if (result.removedBlock) {
-            removedBlock = result.removedBlock;
-          }
-
-          return {
-            ...block,
-            children: result.updatedBlocks,
-          };
-        }
-
-        if (block.type === "tryCatch") {
-          const tryResult = removeBlockById(block.tryChildren, id);
-          const catchResult = removeBlockById(block.catchChildren, id);
-
-          if (tryResult.removedBlock) {
-            removedBlock = tryResult.removedBlock;
-          }
-
-          if (catchResult.removedBlock) {
-            removedBlock = catchResult.removedBlock;
-          }
-
-          return {
-            ...block,
-            tryChildren: tryResult.updatedBlocks,
-            catchChildren: catchResult.updatedBlocks,
-          };
-        }
-
-        return block;
-      })
-      .filter((block): block is Block => block !== null);
-
-    return { updatedBlocks, removedBlock };
-  }
-
-  function blockContainsId(block: Block, id: number): boolean {
-    if (block.id === id) {
-      return true;
-    }
-
-    if (block.type === "if" || block.type === "while" || block.type === "for") {
-      return block.children.some((child) => blockContainsId(child, id));
-    }
-
-    if (block.type === "tryCatch") {
-      return (
-        block.tryChildren.some((child) => blockContainsId(child, id)) ||
-        block.catchChildren.some((child) => blockContainsId(child, id))
-      );
-    }
-
-    return false;
-  }
-
-  function findBlockById(blockList: Block[], id: number): Block | null {
-    for (const block of blockList) {
-      if (block.id === id) {
-        return block;
-      }
-
-      if (
-        block.type === "return" &&
-        isExpressionBlock(block.value) &&
-        block.value.id === id
-      ) {
-        return block.value as Block;
-      }
-
-      if (
-        block.type === "if" ||
-        block.type === "while" ||
-        block.type === "for"
-      ) {
-        const found = findBlockById(block.children, id);
-        if (found) return found;
-      }
-
-      if (block.type === "tryCatch") {
-        const foundInTry = findBlockById(block.tryChildren, id);
-        if (foundInTry) return foundInTry;
-
-        const foundInCatch = findBlockById(block.catchChildren, id);
-        if (foundInCatch) return foundInCatch;
-      }
-    }
-
-    return null;
-  }
-
-  function findBlockLocation(
-    blockList: Block[],
-    id: number,
-    area: ListArea = "root",
-    parentId?: number
-  ): ListDropTarget | null {
-    for (let index = 0; index < blockList.length; index++) {
-      const block = blockList[index];
-
-      if (block.id === id) {
-        if (area === "root") {
-          return {
-            area: "root",
-            index,
-          };
-        }
-
-        return {
-          area,
-          parentId: parentId as number,
-          index,
-        };
-      }
-
-      if (
-        block.type === "if" ||
-        block.type === "while" ||
-        block.type === "for"
-      ) {
-        const found = findBlockLocation(
-          block.children,
-          id,
-          "children",
-          block.id
-        );
-
-        if (found) return found;
-      }
-
-      if (block.type === "tryCatch") {
-        const foundInTry = findBlockLocation(
-          block.tryChildren,
-          id,
-          "tryChildren",
-          block.id
-        );
-
-        if (foundInTry) return foundInTry;
-
-        const foundInCatch = findBlockLocation(
-          block.catchChildren,
-          id,
-          "catchChildren",
-          block.id
-        );
-
-        if (foundInCatch) return foundInCatch;
-      }
-    }
-
-    return null;
-  }
-
-  function isSameListTarget(source: ListDropTarget, target: DropTarget) {
-    if (target.area === "returnValue") {
-      return false;
-    }
-
-    if (source.area !== target.area) {
-      return false;
-    }
-
-    if (source.area === "root" && target.area === "root") {
-      return true;
-    }
-
-    if ("parentId" in source && "parentId" in target) {
-      return source.parentId === target.parentId;
-    }
-
-    return false;
-  }
-
-  function adjustTargetAfterRemoval(
-    blockList: Block[],
-    blockId: number,
-    target: DropTarget
-  ): DropTarget {
-    if (target.area === "returnValue") {
-      return target;
-    }
-
-    const sourceLocation = findBlockLocation(blockList, blockId);
-
-    if (
-      sourceLocation &&
-      isSameListTarget(sourceLocation, target) &&
-      sourceLocation.index < target.index
-    ) {
-      return {
-        ...target,
-        index: target.index - 1,
-      };
-    }
-
-    return target;
-  }
-
-  function handleTemplateDragStart(
-    event: React.DragEvent<HTMLDivElement>,
-    type: BlockType
-  ) {
-    event.dataTransfer.setData("source", "template");
-    event.dataTransfer.setData("blockType", type);
-    event.dataTransfer.effectAllowed = "copy";
-  }
-
-  function handleWorkspaceBlockDragStart(
-    event: React.DragEvent<HTMLDivElement>,
-    id: number
-  ) {
-    event.stopPropagation();
-    event.dataTransfer.setData("source", "workspace");
-    event.dataTransfer.setData("blockId", String(id));
-    event.dataTransfer.effectAllowed = "move";
-  }
-
-  function handleDrop(event: React.DragEvent<HTMLElement>, target: DropTarget) {
-    event.preventDefault();
-    event.stopPropagation();
-
-    const finalTarget = currentDropTarget ?? target;
-    const source = event.dataTransfer.getData("source");
-
-    if (source === "template") {
-      const blockType = event.dataTransfer.getData("blockType") as BlockType;
-
-      if (blockType) {
-        const newBlock = createBlock(blockType);
-        setCurrentBlocks((prev) => insertIntoBlocks(prev, finalTarget, newBlock));
-      }
-    }
-
-    if (source === "function") {
-      const functionId = Number(event.dataTransfer.getData("functionId"));
-      const func = functions.find((item) => item.id === functionId);
-
-      if (func) {
-        const newBlock = createCallBlock(func);
-        setCurrentBlocks((prev) => insertIntoBlocks(prev, finalTarget, newBlock));
-      }
-    }
-
-    if (source === "workspace") {
-      const blockId = Number(event.dataTransfer.getData("blockId"));
-
-      if (!Number.isNaN(blockId)) {
-        setCurrentBlocks((prev) => {
-          const movingBlock = findBlockById(prev, blockId);
-
-          if (!movingBlock) {
-            return prev;
-          }
-
-          if (
-            finalTarget.area === "returnValue" &&
-            !canUseAsReturnValue(movingBlock)
-          ) {
-            return prev;
-          }
-
-          if (
-            "parentId" in finalTarget &&
-            blockContainsId(movingBlock, finalTarget.parentId)
-          ) {
-            return prev;
-          }
-
-          const adjustedTarget = adjustTargetAfterRemoval(
-            prev,
-            blockId,
-            finalTarget
-          );
-
-          const removeResult = removeBlockById(prev, blockId);
-
-          if (!removeResult.removedBlock) {
-            return prev;
-          }
-
-          return insertIntoBlocks(
-            removeResult.updatedBlocks,
-            adjustedTarget,
-            removeResult.removedBlock
-          );
-        });
-      }
-    }
-
-    setActiveDropTarget(null);
-    setCurrentDropTarget(null);
-  }
-
-  function handleDropZoneDragOver(
-    event: React.DragEvent<HTMLElement>,
-    target: DropTarget
-  ) {
-    event.preventDefault();
-    event.stopPropagation();
-
-    setActiveDropTarget(getDropTargetKey(target));
-    setCurrentDropTarget(target);
-  }
-
-  function handleDragEnd() {
-    setActiveDropTarget(null);
-    setCurrentDropTarget(null);
-  }
-
-  function addBlock(type: BlockType) {
-    setCurrentBlocks((prev) => [...prev, createBlock(type)]);
-  }
-
-  function deleteBlock(id: number) {
-    const result = removeBlockById(currentBlocks, id);
-    setCurrentBlocks(result.updatedBlocks);
-  }
-
-  function updateBlock(
-    id: number,
-    field: string,
-    value: string | string[] | ReturnValue
-  ) {
+  function updateBlockField(id: number, field: string, value: unknown) {
     function update(blockList: Block[]): Block[] {
       return blockList.map((block) => {
         if (block.id === id) {
-          return {
-            ...block,
-            [field]: value,
-          } as Block;
-        }
-
-        if (
-          block.type === "return" &&
-          isExpressionBlock(block.value) &&
-          block.value.id === id
-        ) {
-          return {
-            ...block,
-            value: {
-              ...block.value,
-              [field]: value,
-            } as ExpressionBlock,
-          };
+          return { ...block, [field]: value } as Block;
         }
 
         if (
@@ -791,10 +1434,7 @@ function App() {
           block.type === "while" ||
           block.type === "for"
         ) {
-          return {
-            ...block,
-            children: update(block.children),
-          };
+          return { ...block, children: update(block.children) };
         }
 
         if (block.type === "tryCatch") {
@@ -809,15 +1449,263 @@ function App() {
       });
     }
 
-    setCurrentBlocks((prev) => update(prev));
+    setCurrentBlocks((previous) => update(previous));
+  }
+
+  function updateCurrentExpression(
+    id: number,
+    updater: (current: Expression) => Expression
+  ) {
+    setCurrentBlocks((previous) =>
+      updateExpressionsInBlocks(previous, id, updater)
+    );
+  }
+
+  function replaceCurrentExpression(id: number, replacement: Expression) {
+    updateCurrentExpression(id, () => replacement);
+  }
+
+  function updateAtomicExpression(id: number, source: string) {
+    updateCurrentExpression(id, () => createAtomicExpression(source, id));
+  }
+
+  function updateConditionExpression(id: number, source: string) {
+    updateCurrentExpression(id, () => createConditionExpression(source, id));
+  }
+
+  function updateExpressionField(
+    id: number,
+    field: "operator",
+    value: MathOperator | LogicOperator
+  ) {
+    updateCurrentExpression(id, (expression) => {
+      if (expression.type !== "calculation" && expression.type !== "logic") {
+        return expression;
+      }
+
+      return { ...expression, [field]: value } as Expression;
+    });
+  }
+
+
+  function getDropTargetKey(target: DropTarget) {
+    if (target.area === "root") return `root-${target.index}`;
+    if (target.area === "expression") return `expression-${target.expressionId}`;
+    return `${target.area}-${target.parentId}-${target.index}`;
+  }
+
+  function handleTemplateDragStart(
+    event: DragEvent<HTMLDivElement>,
+    type: BlockType
+  ) {
+    event.dataTransfer.setData("source", "template");
+    event.dataTransfer.setData("blockType", type);
+    event.dataTransfer.effectAllowed = "copy";
+  }
+
+  function handleWorkspaceBlockDragStart(
+    event: DragEvent<HTMLDivElement>,
+    id: number
+  ) {
+    event.stopPropagation();
+    event.dataTransfer.setData("source", "workspace");
+    event.dataTransfer.setData("blockId", String(id));
+    event.dataTransfer.effectAllowed = "move";
+  }
+
+  function handleExpressionDragStart(
+    event: DragEvent<HTMLDivElement>,
+    id: number
+  ) {
+    event.stopPropagation();
+    event.dataTransfer.setData("source", "expression");
+    event.dataTransfer.setData("expressionId", String(id));
+    event.dataTransfer.effectAllowed = "move";
+  }
+
+  function handleDropZoneDragOver(
+    event: DragEvent<HTMLElement>,
+    target: DropTarget
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    setActiveDropTarget(getDropTargetKey(target));
+    setCurrentDropTarget(target);
+  }
+
+  function handleDragEnd() {
+    setActiveDropTarget(null);
+    setCurrentDropTarget(null);
+  }
+
+  function handleDrop(event: DragEvent<HTMLElement>, target: DropTarget) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const finalTarget = currentDropTarget ?? target;
+    const source = event.dataTransfer.getData("source");
+
+    if (source === "template") {
+      const blockType = event.dataTransfer.getData("blockType") as BlockType;
+
+      if (finalTarget.area === "expression") {
+        if (blockType === "calculation") {
+          replaceCurrentExpression(
+            finalTarget.expressionId,
+            createCalculationExpression()
+          );
+        }
+
+        if (blockType === "logic") {
+          replaceCurrentExpression(finalTarget.expressionId, createLogicExpression());
+        }
+      } else if (blockType) {
+        setCurrentBlocks((previous) =>
+          insertIntoBlocks(previous, finalTarget, createBlock(blockType))
+        );
+      }
+    }
+
+    if (source === "function") {
+      const functionId = Number(event.dataTransfer.getData("functionId"));
+      const func = functions.find((item) => item.id === functionId);
+
+      if (func) {
+        const call = createCallExpression(func);
+
+        if (finalTarget.area === "expression") {
+          replaceCurrentExpression(finalTarget.expressionId, call);
+        } else {
+          setCurrentBlocks((previous) =>
+            insertIntoBlocks(previous, finalTarget, call)
+          );
+        }
+      }
+    }
+
+    if (source === "workspace") {
+      const blockId = Number(event.dataTransfer.getData("blockId"));
+
+      if (!Number.isNaN(blockId)) {
+        setCurrentBlocks((previous) => {
+          const movingBlock = findBlockById(previous, blockId);
+          if (!movingBlock) return previous;
+
+          if (finalTarget.area === "expression") {
+            if (!isExpressionStatementBlock(movingBlock)) return previous;
+
+            if (
+              blockContainsExpressionId(
+                movingBlock,
+                finalTarget.expressionId
+              )
+            ) {
+              return previous;
+            }
+
+            const removal = removeBlockById(previous, blockId);
+            if (!removal.removedBlock) return previous;
+
+            return updateExpressionsInBlocks(
+              removal.updatedBlocks,
+              finalTarget.expressionId,
+              () => movingBlock
+            );
+          }
+
+          if (
+            "parentId" in finalTarget &&
+            blockContainsBlockId(movingBlock, finalTarget.parentId)
+          ) {
+            return previous;
+          }
+
+          const adjustedTarget = adjustTargetAfterRemoval(
+            previous,
+            blockId,
+            finalTarget
+          );
+          const removal = removeBlockById(previous, blockId);
+
+          if (!removal.removedBlock) return previous;
+
+          return insertIntoBlocks(
+            removal.updatedBlocks,
+            adjustedTarget,
+            removal.removedBlock
+          );
+        });
+      }
+    }
+
+    if (source === "expression") {
+      const expressionId = Number(event.dataTransfer.getData("expressionId"));
+
+      if (!Number.isNaN(expressionId)) {
+        setCurrentBlocks((previous) => {
+          const movingExpression = findExpressionInBlocks(previous, expressionId);
+          if (!movingExpression) return previous;
+
+          if (finalTarget.area === "expression") {
+            if (expressionId === finalTarget.expressionId) return previous;
+            if (
+              expressionContainsId(
+                movingExpression,
+                finalTarget.expressionId
+              )
+            ) {
+              return previous;
+            }
+
+            const withoutSource = updateExpressionsInBlocks(
+              previous,
+              expressionId,
+              () => createAtomicExpression()
+            );
+
+            return updateExpressionsInBlocks(
+              withoutSource,
+              finalTarget.expressionId,
+              () => movingExpression
+            );
+          }
+
+          if (!isExpressionStatement(movingExpression)) return previous;
+
+          const withoutSource = updateExpressionsInBlocks(
+            previous,
+            expressionId,
+            () => createAtomicExpression()
+          );
+
+          return insertIntoBlocks(
+            withoutSource,
+            finalTarget,
+            movingExpression
+          );
+        });
+      }
+    }
+
+    setActiveDropTarget(null);
+    setCurrentDropTarget(null);
+  }
+
+  function addBlock(type: BlockType) {
+    setCurrentBlocks((previous) => [...previous, createBlock(type)]);
+  }
+
+  function deleteBlock(id: number) {
+    const result = removeBlockById(currentBlocks, id);
+    setCurrentBlocks(result.updatedBlocks);
   }
 
   function zoomIn() {
-    setZoom((prev) => Math.min(prev + 0.1, 1.6));
+    setZoom((previous) => Math.min(previous + 0.1, 1.6));
   }
 
   function zoomOut() {
-    setZoom((prev) => Math.max(prev - 0.1, 0.6));
+    setZoom((previous) => Math.max(previous - 0.1, 0.6));
   }
 
   function resetZoom() {
@@ -832,25 +1720,25 @@ function App() {
       children: [],
     };
 
-    setFunctions((prev) => [...prev, newFunction]);
-    setOpenFunctionTabIds((prev) => [...prev, newFunction.id]);
+    setFunctions((previous) => [...previous, newFunction]);
+    setOpenFunctionTabIds((previous) => [...previous, newFunction.id]);
     setEditingFunctionId(newFunction.id);
   }
 
   function openFunctionTab(id: number) {
-    setOpenFunctionTabIds((prev) =>
-      prev.includes(id) ? prev : [...prev, id]
+    setOpenFunctionTabIds((previous) =>
+      previous.includes(id) ? previous : [...previous, id]
     );
     setEditingFunctionId(id);
     setOpenFunctionMenuId(null);
   }
 
   function closeFunctionTab(id: number) {
-    setOpenFunctionTabIds((prev) => prev.filter((tabId) => tabId !== id));
+    setOpenFunctionTabIds((previous) =>
+      previous.filter((tabId) => tabId !== id)
+    );
 
-    if (editingFunctionId === id) {
-      setEditingFunctionId(null);
-    }
+    if (editingFunctionId === id) setEditingFunctionId(null);
   }
 
   function requestDeleteFunction(id: number) {
@@ -864,281 +1752,89 @@ function App() {
 
   function confirmDeleteFunction() {
     if (functionToDeleteId === null) return;
-
     deleteFunction(functionToDeleteId);
     setFunctionToDeleteId(null);
   }
 
-  function syncExpressionFunctionCalls(
-    value: ReturnValue,
-    functionId: number,
-    nextName: string,
-    nextParams: string[]
-  ): ReturnValue {
-    if (!isExpressionBlock(value)) {
-      return value;
-    }
-
-    if (value.type === "call" && value.functionId === functionId) {
-      const nextArgs = nextParams.map((_, index) => value.args[index] ?? "");
-
-      return {
-        ...value,
-        name: nextName,
-        paramNames: nextParams,
-        args: nextArgs,
-      };
-    }
-
-    return value;
-  }
-
-  function syncFunctionCalls(
-    blockList: Block[],
-    functionId: number,
-    nextName: string,
-    nextParams: string[]
-  ): Block[] {
-    return blockList.map((block) => {
-      if (block.type === "call" && block.functionId === functionId) {
-        const nextArgs = nextParams.map((_, index) => block.args[index] ?? "");
-
-        return {
-          ...block,
-          name: nextName,
-          paramNames: nextParams,
-          args: nextArgs,
-        };
-      }
-
-      if (block.type === "return") {
-        return {
-          ...block,
-          value: syncExpressionFunctionCalls(
-            block.value,
-            functionId,
-            nextName,
-            nextParams
-          ),
-        };
-      }
-
-      if (
-        block.type === "if" ||
-        block.type === "while" ||
-        block.type === "for"
-      ) {
-        return {
-          ...block,
-          children: syncFunctionCalls(
-            block.children,
-            functionId,
-            nextName,
-            nextParams
-          ),
-        };
-      }
-
-      if (block.type === "tryCatch") {
-        return {
-          ...block,
-          tryChildren: syncFunctionCalls(
-            block.tryChildren,
-            functionId,
-            nextName,
-            nextParams
-          ),
-          catchChildren: syncFunctionCalls(
-            block.catchChildren,
-            functionId,
-            nextName,
-            nextParams
-          ),
-        };
-      }
-
-      return block;
-    });
-  }
-
   function updateFunctionName(id: number, name: string) {
+    const sanitizedName = sanitizeIdentifierInput(name);
     const currentFunction = functions.find((func) => func.id === id);
-    const currentParams = currentFunction?.params ?? [];
+    const params = currentFunction?.params ?? [];
 
-    setFunctions((prev) =>
-      prev.map((func) => {
-        const updatedFunc = func.id === id ? { ...func, name } : func;
-
+    setFunctions((previous) =>
+      previous.map((func) => {
+        const updatedFunction =
+          func.id === id ? { ...func, name: sanitizedName } : func;
         return {
-          ...updatedFunc,
+          ...updatedFunction,
           children: syncFunctionCalls(
-            updatedFunc.children,
+            updatedFunction.children,
             id,
-            name,
-            currentParams
+            sanitizedName,
+            params
           ),
         };
       })
     );
 
-    setBlocks((prev) => syncFunctionCalls(prev, id, name, currentParams));
+    setBlocks((previous) =>
+      syncFunctionCalls(previous, id, sanitizedName, params)
+    );
+  }
+
+  function updateFunctionParams(id: number, nextParams: string[]) {
+    const currentFunction = functions.find((func) => func.id === id);
+    if (!currentFunction) return;
+
+    setFunctions((previous) =>
+      previous.map((func) => {
+        const updatedFunction =
+          func.id === id ? { ...func, params: nextParams } : func;
+
+        return {
+          ...updatedFunction,
+          children: syncFunctionCalls(
+            updatedFunction.children,
+            id,
+            currentFunction.name,
+            nextParams
+          ),
+        };
+      })
+    );
+
+    setBlocks((previous) =>
+      syncFunctionCalls(previous, id, currentFunction.name, nextParams)
+    );
   }
 
   function addParameter(id: number) {
-    const currentFunction = functions.find((func) => func.id === id);
-    if (!currentFunction) return;
-
-    const nextParams = [...currentFunction.params, ""];
-
-    setFunctions((prev) =>
-      prev.map((func) => {
-        const updatedFunc =
-          func.id === id ? { ...func, params: nextParams } : func;
-
-        return {
-          ...updatedFunc,
-          children: syncFunctionCalls(
-            updatedFunc.children,
-            id,
-            currentFunction.name,
-            nextParams
-          ),
-        };
-      })
-    );
-
-    setBlocks((prev) =>
-      syncFunctionCalls(prev, id, currentFunction.name, nextParams)
-    );
+    const func = functions.find((item) => item.id === id);
+    if (!func) return;
+    updateFunctionParams(id, [...func.params, ""]);
   }
 
   function updateParameter(id: number, index: number, value: string) {
-    const currentFunction = functions.find((func) => func.id === id);
-    if (!currentFunction) return;
-
-    const nextParams = [...currentFunction.params];
-    nextParams[index] = value;
-
-    setFunctions((prev) =>
-      prev.map((func) => {
-        const updatedFunc =
-          func.id === id ? { ...func, params: nextParams } : func;
-
-        return {
-          ...updatedFunc,
-          children: syncFunctionCalls(
-            updatedFunc.children,
-            id,
-            currentFunction.name,
-            nextParams
-          ),
-        };
-      })
-    );
-
-    setBlocks((prev) =>
-      syncFunctionCalls(prev, id, currentFunction.name, nextParams)
-    );
+    const sanitizedValue = sanitizeIdentifierInput(value);
+    const func = functions.find((item) => item.id === id);
+    if (!func) return;
+    const nextParams = [...func.params];
+    nextParams[index] = sanitizedValue;
+    updateFunctionParams(id, nextParams);
   }
 
   function deleteParameter(id: number, index: number) {
-    const currentFunction = functions.find((func) => func.id === id);
-    if (!currentFunction) return;
-
-    const nextParams = currentFunction.params.filter(
-      (_, paramIndex) => paramIndex !== index
+    const func = functions.find((item) => item.id === id);
+    if (!func) return;
+    updateFunctionParams(
+      id,
+      func.params.filter((_, paramIndex) => paramIndex !== index)
     );
-
-    setFunctions((prev) =>
-      prev.map((func) => {
-        const updatedFunc =
-          func.id === id ? { ...func, params: nextParams } : func;
-
-        return {
-          ...updatedFunc,
-          children: syncFunctionCalls(
-            updatedFunc.children,
-            id,
-            currentFunction.name,
-            nextParams
-          ),
-        };
-      })
-    );
-
-    setBlocks((prev) =>
-      syncFunctionCalls(prev, id, currentFunction.name, nextParams)
-    );
-  }
-
-  function createCallBlock(func: UserFunction): Block {
-    return {
-      id: makeId(),
-      type: "call",
-      functionId: func.id,
-      name: func.name,
-      paramNames: func.params,
-      args: func.params.map(() => ""),
-    };
-  }
-
-  function removeFunctionCallsFromReturnValue(
-    value: ReturnValue,
-    functionId: number
-  ): ReturnValue {
-    if (
-      isExpressionBlock(value) &&
-      value.type === "call" &&
-      value.functionId === functionId
-    ) {
-      return "";
-    }
-
-    return value;
-  }
-
-  function removeFunctionCalls(blockList: Block[], functionId: number): Block[] {
-    return blockList
-      .filter(
-        (block) => !(block.type === "call" && block.functionId === functionId)
-      )
-      .map((block) => {
-        if (block.type === "return") {
-          return {
-            ...block,
-            value: removeFunctionCallsFromReturnValue(
-              block.value,
-              functionId
-            ),
-          };
-        }
-
-        if (
-          block.type === "if" ||
-          block.type === "while" ||
-          block.type === "for"
-        ) {
-          return {
-            ...block,
-            children: removeFunctionCalls(block.children, functionId),
-          };
-        }
-
-        if (block.type === "tryCatch") {
-          return {
-            ...block,
-            tryChildren: removeFunctionCalls(block.tryChildren, functionId),
-            catchChildren: removeFunctionCalls(block.catchChildren, functionId),
-          };
-        }
-
-        return block;
-      });
   }
 
   function deleteFunction(id: number) {
-    setFunctions((prev) =>
-      prev
+    setFunctions((previous) =>
+      previous
         .filter((func) => func.id !== id)
         .map((func) => ({
           ...func,
@@ -1146,36 +1842,45 @@ function App() {
         }))
     );
 
-    setOpenFunctionTabIds((prev) => prev.filter((tabId) => tabId !== id));
+    setOpenFunctionTabIds((previous) =>
+      previous.filter((tabId) => tabId !== id)
+    );
 
-    if (editingFunctionId === id) {
-      setEditingFunctionId(null);
-    }
-
-    setBlocks((prev) => removeFunctionCalls(prev, id));
+    if (editingFunctionId === id) setEditingFunctionId(null);
+    setBlocks((previous) => removeFunctionCalls(previous, id));
   }
 
   function addFunctionCall(func: UserFunction) {
-    setCurrentBlocks((prev) => [...prev, createCallBlock(func)]);
+    setCurrentBlocks((previous) => [...previous, createCallExpression(func)]);
   }
 
   async function checkFlow() {
+    const validationErrors: string[] = [];
+
+    blocks.forEach((block, index) =>
+      collectBlockErrors(block, `blocks[${index}]`, validationErrors)
+    );
+
+    functions.forEach((func, functionIndex) =>
+      func.children.forEach((block, blockIndex) =>
+        collectBlockErrors(
+          block,
+          `functions[${functionIndex}].children[${blockIndex}]`,
+          validationErrors
+        )
+      )
+    );
+
+    if (validationErrors.length > 0) {
+      setResult(`Fix these input values before running:\n${validationErrors.join("\n")}`);
+      return;
+    }
+
     try {
       const response = await fetch("http://localhost:3000/check-flow", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          functions: functions.map((func) => ({
-            id: func.id,
-            type: "def",
-            name: func.name,
-            params: func.params,
-            children: func.children,
-          })),
-          blocks,
-        }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(programJson),
       });
 
       const data = await response.json();
@@ -1202,7 +1907,11 @@ function App() {
     }
   }
 
-  function renderPaletteBlock(label: string, type: BlockType, className: string) {
+  function renderPaletteBlock(
+    label: string,
+    type: BlockType,
+    className: string
+  ) {
     return (
       <div
         className={`template-block ${className}`}
@@ -1216,7 +1925,7 @@ function App() {
     );
   }
 
-  function renderDropZone(target: DropTarget) {
+  function renderDropZone(target: ListDropTarget) {
     const key = getDropTargetKey(target);
 
     return (
@@ -1237,7 +1946,7 @@ function App() {
     area: "children" | "tryChildren" | "catchChildren",
     parentId: number
   ) {
-    const endTarget: DropTarget = {
+    const endTarget: ListDropTarget = {
       area,
       parentId,
       index: blockList.length,
@@ -1254,38 +1963,25 @@ function App() {
         onDrop={(event) => handleDrop(event, endTarget)}
       >
         {blockList.length === 0 && (
-          <div className="nested-placeholder">Drop blocks here</div>
+          <div className="nested-placeholder">Drop statement blocks here</div>
         )}
-
         {renderBlockList(blockList, area, parentId)}
       </div>
     );
   }
 
   function getBlockHoverTarget(
-    event: React.DragEvent<HTMLDivElement>,
+    event: DragEvent<HTMLDivElement>,
     area: ListArea,
     index: number,
     parentId?: number
   ): ListDropTarget {
     const rect = event.currentTarget.getBoundingClientRect();
-    const mouseY = event.clientY;
-    const isTopHalf = mouseY < rect.top + rect.height / 2;
+    const targetIndex =
+      event.clientY < rect.top + rect.height / 2 ? index : index + 1;
 
-    const targetIndex = isTopHalf ? index : index + 1;
-
-    if (area === "root") {
-      return {
-        area: "root",
-        index: targetIndex,
-      };
-    }
-
-    return {
-      area,
-      parentId: parentId as number,
-      index: targetIndex,
-    };
+    if (area === "root") return { area: "root", index: targetIndex };
+    return { area, parentId: parentId as number, index: targetIndex };
   }
 
   function renderBlockList(
@@ -1315,7 +2011,6 @@ function App() {
             }}
           >
             {renderBlock(block)}
-
             {renderDropZone(
               area === "root"
                 ? { area: "root", index: index + 1 }
@@ -1331,111 +2026,164 @@ function App() {
     );
   }
 
-  function isContainerBlock(block: Block) {
+  function renderExpressionSlot(
+    expression: Expression,
+    placeholder: string,
+    className = "",
+    minWidth = 88,
+    maxWidth = 230,
+    options: { showBadge?: boolean; condition?: boolean } = {}
+  ) {
+    const { showBadge = true, condition = false } = options;
+    const target: ExpressionDropTarget = {
+      area: "expression",
+      expressionId: expression.id,
+    };
+    const key = getDropTargetKey(target);
+    const active = activeDropTarget === key;
+    const invalid =
+      !condition && expression.type === "literal" && !expression.valid;
+
     return (
-      block.type === "if" ||
-      block.type === "while" ||
-      block.type === "for" ||
-      block.type === "tryCatch"
+      <div
+        className={`expression-slot ${
+          isAtomicExpression(expression)
+            ? "atomic-expression-slot"
+            : "composite-expression-slot"
+        } ${active ? "active-expression-slot" : ""} ${
+          invalid ? "invalid-expression-slot" : ""
+        } ${className}`}
+        title={invalid ? expression.error : undefined}
+        onDragOver={(event) => handleDropZoneDragOver(event, target)}
+        onDrop={(event) => handleDrop(event, target)}
+      >
+        {isAtomicExpression(expression) ? (
+          <>
+            {showBadge && (
+              <span className="atomic-kind-badge">
+                {expression.type === "variableReference"
+                  ? "ref"
+                  : expression.dataType === "string"
+                    ? "str"
+                    : expression.dataType}
+              </span>
+            )}
+            <input
+              className="atomic-expression-input"
+              placeholder={placeholder}
+              value={expression.source}
+              style={{
+                width: getInputWidth(expression.source, minWidth, maxWidth),
+              }}
+              onChange={(event) =>
+                condition
+                  ? updateConditionExpression(
+                      expression.id,
+                      event.target.value
+                    )
+                  : updateAtomicExpression(expression.id, event.target.value)
+              }
+              onDragStart={(event) => event.stopPropagation()}
+            />
+          </>
+        ) : (
+          <>
+            {renderNestedExpression(expression)}
+            <button
+              className="clear-expression-button"
+              title="Clear nested expression"
+              onClick={(event) => {
+                event.stopPropagation();
+                replaceCurrentExpression(
+                  expression.id,
+                  condition
+                    ? createConditionExpression()
+                    : createAtomicExpression()
+                );
+              }}
+            >
+              ×
+            </button>
+          </>
+        )}
+      </div>
     );
   }
 
-  function renderExpressionBlock(expression: ExpressionBlock) {
-    if (expression.type === "calculation") {
-      return (
-        <div className="return-expression-block calculation-block">
-          <input
-            placeholder="left"
-            value={expression.left}
-            style={{ width: getInputWidth(expression.left) }}
-            onChange={(event) =>
-              updateBlock(expression.id, "left", event.target.value)
-            }
-          />
-
-          <select
-            value={expression.operator}
-            onChange={(event) =>
-              updateBlock(expression.id, "operator", event.target.value)
-            }
-          >
-            <option value="+">+</option>
-            <option value="-">−</option>
-            <option value="*">×</option>
-            <option value="/">÷</option>
-            <option value="%">%</option>
-          </select>
-
-          <input
-            placeholder="right"
-            value={expression.right}
-            style={{ width: getInputWidth(expression.right) }}
-            onChange={(event) =>
-              updateBlock(expression.id, "right", event.target.value)
-            }
-          />
-        </div>
-      );
-    }
-
-    if (expression.type === "logic") {
-      return (
-        <div className="return-expression-block logic-block">
-          <input
-            placeholder="left"
-            value={expression.left}
-            style={{ width: getInputWidth(expression.left) }}
-            onChange={(event) =>
-              updateBlock(expression.id, "left", event.target.value)
-            }
-          />
-
-          <select
-            value={expression.operator}
-            onChange={(event) =>
-              updateBlock(expression.id, "operator", event.target.value)
-            }
-          >
-            <option value="==">==</option>
-            <option value="!=">!=</option>
-            <option value=">">&gt;</option>
-            <option value="<">&lt;</option>
-            <option value=">=">&gt;=</option>
-            <option value="<=">&lt;=</option>
-            <option value="and">and</option>
-            <option value="or">or</option>
-          </select>
-
-          <input
-            placeholder="right"
-            value={expression.right}
-            style={{ width: getInputWidth(expression.right) }}
-            onChange={(event) =>
-              updateBlock(expression.id, "right", event.target.value)
-            }
-          />
-        </div>
-      );
-    }
-
+  function renderCalculationContent(expression: CalculationExpression) {
     return (
-      <div className="return-expression-block call-block">
-        <span>{expression.name}</span>
+      <div className="expression-content-row">
+        {renderExpressionSlot(expression.left, "value")}
+        <select
+          value={expression.operator}
+          onChange={(event) =>
+            updateExpressionField(
+              expression.id,
+              "operator",
+              event.target.value as MathOperator
+            )
+          }
+        >
+          <option value="+">+</option>
+          <option value="-">−</option>
+          <option value="*">×</option>
+          <option value="/">÷</option>
+          <option value="%">%</option>
+        </select>
+        {renderExpressionSlot(expression.right, "value")}
+      </div>
+    );
+  }
+
+  function renderLogicContent(expression: LogicExpression) {
+    return (
+      <div className="expression-content-row">
+        {renderExpressionSlot(expression.left, "value")}
+        <select
+          value={expression.operator}
+          onChange={(event) =>
+            updateExpressionField(
+              expression.id,
+              "operator",
+              event.target.value as LogicOperator
+            )
+          }
+        >
+          <option value="==">==</option>
+          <option value="!=">!=</option>
+          <option value=">">&gt;</option>
+          <option value="<">&lt;</option>
+          <option value=">=">&gt;=</option>
+          <option value="<=">&lt;=</option>
+          <option value="and">and</option>
+          <option value="or">or</option>
+        </select>
+        {renderExpressionSlot(expression.right, "value")}
+      </div>
+    );
+  }
+
+  function renderCallContent(expression: CallExpression) {
+    return (
+      <div className="expression-content-row function-call-row">
+        <span className="function-call-name">{expression.name}</span>
         <span>(</span>
 
-        {expression.args.map((arg, index) => (
-          <input
-            key={index}
-            className="function-arg-hole"
-            placeholder={expression.paramNames[index] || `arg ${index + 1}`}
-            value={arg}
-            style={{ width: getInputWidth(arg, 72, 160) }}
-            onChange={(event) => {
-              const newArgs = [...expression.args];
-              newArgs[index] = event.target.value;
-              updateBlock(expression.id, "args", newArgs);
-            }}
-          />
+        {expression.args.length === 0 && (
+          <span className="no-arguments-label">no args</span>
+        )}
+
+        {expression.args.map((argument, index) => (
+          <div key={argument.id} className="function-argument-item">
+            {renderExpressionSlot(
+              argument,
+              expression.paramNames[index] || `arg ${index + 1}`,
+              "function-argument-slot",
+              78,
+              170
+            )}
+            {index < expression.args.length - 1 && <span>,</span>}
+          </div>
         ))}
 
         <span>)</span>
@@ -1443,44 +2191,40 @@ function App() {
     );
   }
 
-  function renderReturnValue(block: Extract<Block, { type: "return" }>) {
-    const target: DropTarget = {
-      area: "returnValue",
-      parentId: block.id,
-    };
-
-    const key = getDropTargetKey(target);
+  function renderNestedExpression(expression: ExpressionStatementBlock) {
+    const expressionClass =
+      expression.type === "calculation"
+        ? "calculation-expression"
+        : expression.type === "logic"
+          ? "logic-expression"
+          : "call-expression";
 
     return (
       <div
-        className={`return-value-slot ${
-          activeDropTarget === key ? "active-return-value-slot" : ""
-        }`}
-        onDragOver={(event) => handleDropZoneDragOver(event, target)}
-        onDrop={(event) => handleDrop(event, target)}
+        className={`nested-expression ${expressionClass}`}
+        draggable
+        onDragStart={(event) =>
+          handleExpressionDragStart(event, expression.id)
+        }
+        onDragEnd={handleDragEnd}
       >
-        {typeof block.value === "string" ? (
-          <input
-            className="return-value-input"
-            placeholder="type value or drop block"
-            value={block.value}
-            onChange={(event) =>
-              updateBlock(block.id, "value", event.target.value)
-            }
-          />
-        ) : (
-          <>
-            {renderExpressionBlock(block.value)}
-
-            <button
-              className="clear-return-value-button"
-              onClick={() => updateBlock(block.id, "value", "")}
-            >
-              ×
-            </button>
-          </>
-        )}
+        <span className="expression-grip" title="Drag nested expression">
+          ⋮⋮
+        </span>
+        {expression.type === "calculation" &&
+          renderCalculationContent(expression)}
+        {expression.type === "logic" && renderLogicContent(expression)}
+        {expression.type === "call" && renderCallContent(expression)}
       </div>
+    );
+  }
+
+  function isContainerBlock(block: Block) {
+    return (
+      block.type === "if" ||
+      block.type === "while" ||
+      block.type === "for" ||
+      block.type === "tryCatch"
     );
   }
 
@@ -1499,229 +2243,131 @@ function App() {
         </button>
 
         {block.type === "variable" && (
-          <div className="block-row">
-            <select
-              value={block.dataType}
-              onChange={(event) =>
-                updateBlock(block.id, "dataType", event.target.value)
-              }
-            >
-              <option value="int">int</option>
-              <option value="float">float</option>
-              <option value="bool">bool</option>
-              <option value="string">string</option>
-            </select>
-
+          <div className="block-row expression-enabled-row">
             <input
               placeholder="name"
               value={block.name}
-              style={{ width: getInputWidth(block.name) }}
+              style={{ width: getInputWidth(block.name, 72, 160) }}
               onChange={(event) =>
-                updateBlock(block.id, "name", event.target.value)
+                updateBlockField(
+                  block.id,
+                  "name",
+                  sanitizeIdentifierInput(event.target.value)
+                )
               }
             />
 
             <span>=</span>
 
-            <input
-              placeholder="value"
-              value={block.value}
-              style={{ width: getInputWidth(block.value) }}
-              onChange={(event) =>
-                updateBlock(block.id, "value", event.target.value)
-              }
-            />
+            {renderExpressionSlot(
+              block.value,
+              "value",
+              "variable-value-slot",
+              70,
+              180
+            )}
           </div>
         )}
 
         {block.type === "calculation" && (
-          <div className="block-row">
-            <input
-              placeholder="left"
-              value={block.left}
-              style={{ width: getInputWidth(block.left) }}
-              onChange={(event) =>
-                updateBlock(block.id, "left", event.target.value)
-              }
-            />
-
-            <select
-              value={block.operator}
-              onChange={(event) =>
-                updateBlock(block.id, "operator", event.target.value)
-              }
-            >
-              <option value="+">+</option>
-              <option value="-">−</option>
-              <option value="*">×</option>
-              <option value="/">÷</option>
-              <option value="%">%</option>
-            </select>
-
-            <input
-              placeholder="right"
-              value={block.right}
-              style={{ width: getInputWidth(block.right) }}
-              onChange={(event) =>
-                updateBlock(block.id, "right", event.target.value)
-              }
-            />
+          <div className="block-row expression-enabled-row">
+            {renderCalculationContent(block)}
           </div>
         )}
 
         {block.type === "logic" && (
-          <div className="block-row">
-            <input
-              placeholder="left"
-              value={block.left}
-              style={{ width: getInputWidth(block.left) }}
-              onChange={(event) =>
-                updateBlock(block.id, "left", event.target.value)
-              }
-            />
-
-            <select
-              value={block.operator}
-              onChange={(event) =>
-                updateBlock(block.id, "operator", event.target.value)
-              }
-            >
-              <option value="==">==</option>
-              <option value="!=">!=</option>
-              <option value=">">&gt;</option>
-              <option value="<">&lt;</option>
-              <option value=">=">&gt;=</option>
-              <option value="<=">&lt;=</option>
-              <option value="and">and</option>
-              <option value="or">or</option>
-            </select>
-
-            <input
-              placeholder="right"
-              value={block.right}
-              style={{ width: getInputWidth(block.right) }}
-              onChange={(event) =>
-                updateBlock(block.id, "right", event.target.value)
-              }
-            />
+          <div className="block-row expression-enabled-row">
+            {renderLogicContent(block)}
           </div>
         )}
 
         {block.type === "print" && (
-          <div className="block-row">
+          <div className="block-row expression-enabled-row">
             <span>print</span>
-            <input
-              placeholder="value"
-              value={block.value}
-              style={{ width: getInputWidth(block.value) }}
-              onChange={(event) =>
-                updateBlock(block.id, "value", event.target.value)
-              }
-            />
+            {renderExpressionSlot(
+              block.value,
+              "value",
+              "wide-expression-slot",
+              150,
+              300
+            )}
           </div>
         )}
 
         {block.type === "return" && (
-          <div className="block-row">
+          <div className="block-row expression-enabled-row">
             <span>return</span>
-            {renderReturnValue(block)}
+            {renderExpressionSlot(
+              block.value,
+              "value",
+              "wide-expression-slot",
+              150,
+              300
+            )}
           </div>
         )}
 
         {block.type === "call" && (
-          <div className="block-row function-call-row">
-            <span>{block.name}</span>
-            <span>(</span>
-
-            {block.args.map((arg, index) => (
-              <input
-                key={index}
-                className="function-arg-hole"
-                placeholder={block.paramNames[index] || `arg ${index + 1}`}
-                value={arg}
-                style={{ width: getInputWidth(arg, 72, 160) }}
-                onChange={(event) => {
-                  const newArgs = [...block.args];
-                  newArgs[index] = event.target.value;
-                  updateBlock(block.id, "args", newArgs);
-                }}
-              />
-            ))}
-
-            <span>)</span>
+          <div className="block-row expression-enabled-row">
+            {renderCallContent(block)}
           </div>
         )}
 
         {block.type === "if" && (
           <>
-            <div className="block-row">
+            <div className="block-row expression-enabled-row">
               <span>if</span>
-              <input
-                className="condition-input"
-                placeholder="condition"
-                value={block.condition}
-                style={{ width: getInputWidth(block.condition, 150, 340) }}
-                onChange={(event) =>
-                  updateBlock(block.id, "condition", event.target.value)
-                }
-              />
+              {renderExpressionSlot(
+                block.condition,
+                "condition",
+                "condition-expression-slot",
+                110,
+                260,
+                { showBadge: false, condition: true }
+              )}
             </div>
-
             {renderNestedArea(block.children, "children", block.id)}
           </>
         )}
 
         {block.type === "while" && (
           <>
-            <div className="block-row">
+            <div className="block-row expression-enabled-row">
               <span>while</span>
-              <input
-                className="condition-input"
-                placeholder="condition"
-                value={block.condition}
-                style={{ width: getInputWidth(block.condition, 150, 340) }}
-                onChange={(event) =>
-                  updateBlock(block.id, "condition", event.target.value)
-                }
-              />
+              {renderExpressionSlot(
+                block.condition,
+                "condition",
+                "condition-expression-slot",
+                110,
+                260,
+                { showBadge: false, condition: true }
+              )}
             </div>
-
             {renderNestedArea(block.children, "children", block.id)}
           </>
         )}
 
         {block.type === "for" && (
           <>
-            <div className="block-row">
+            <div className="block-row expression-enabled-row">
               <span>for</span>
               <input
                 placeholder="i"
                 value={block.variable}
                 style={{ width: getInputWidth(block.variable) }}
                 onChange={(event) =>
-                  updateBlock(block.id, "variable", event.target.value)
+                  updateBlockField(
+                    block.id,
+                    "variable",
+                    sanitizeIdentifierInput(event.target.value)
+                  )
                 }
               />
               <span>from</span>
-              <input
-                placeholder="0"
-                value={block.start}
-                style={{ width: getInputWidth(block.start) }}
-                onChange={(event) =>
-                  updateBlock(block.id, "start", event.target.value)
-                }
-              />
+              {renderExpressionSlot(block.start, "0", "compact-expression-slot")}
               <span>to</span>
-              <input
-                placeholder="10"
-                value={block.end}
-                style={{ width: getInputWidth(block.end) }}
-                onChange={(event) =>
-                  updateBlock(block.id, "end", event.target.value)
-                }
-              />
+              {renderExpressionSlot(block.end, "10", "compact-expression-slot")}
             </div>
-
             {renderNestedArea(block.children, "children", block.id)}
           </>
         )}
@@ -1731,7 +2377,6 @@ function App() {
             <div className="block-row">
               <span>try</span>
             </div>
-
             {renderNestedArea(block.tryChildren, "tryChildren", block.id)}
 
             <div className="catch-row">
@@ -1741,11 +2386,14 @@ function App() {
                 value={block.catchErrorName}
                 style={{ width: getInputWidth(block.catchErrorName) }}
                 onChange={(event) =>
-                  updateBlock(block.id, "catchErrorName", event.target.value)
+                  updateBlockField(
+                    block.id,
+                    "catchErrorName",
+                    sanitizeIdentifierInput(event.target.value)
+                  )
                 }
               />
             </div>
-
             {renderNestedArea(block.catchChildren, "catchChildren", block.id)}
           </>
         )}
@@ -1795,8 +2443,8 @@ function App() {
                 className="function-more-button"
                 onClick={(event) => {
                   event.stopPropagation();
-                  setOpenFunctionMenuId((prev) =>
-                    prev === func.id ? null : func.id
+                  setOpenFunctionMenuId((previous) =>
+                    previous === func.id ? null : func.id
                   );
                 }}
                 title="Function options"
@@ -1857,7 +2505,7 @@ function App() {
         </section>
 
         <section className="block-section">
-          <h3>Operations</h3>
+          <h3>Expressions</h3>
           {renderPaletteBlock(
             "calculation",
             "calculation",
@@ -1905,12 +2553,13 @@ function App() {
                 <button
                   key={functionId}
                   className={`workspace-tab function-tab ${
-                    editingFunctionId === functionId ? "active-workspace-tab" : ""
+                    editingFunctionId === functionId
+                      ? "active-workspace-tab"
+                      : ""
                   }`}
                   onClick={() => setEditingFunctionId(functionId)}
                 >
                   <span>{func.name}</span>
-
                   <span
                     className="tab-close-button"
                     onClick={(event) => {
@@ -1935,7 +2584,7 @@ function App() {
               <p>
                 {editingFunction
                   ? "Build this function, then switch back to the main workspace."
-                  : "Drop blocks into the main area or inside container blocks."}
+                  : "Drop statement blocks in the workspace and expression blocks inside value slots."}
               </p>
 
               {editingFunction && (
@@ -1977,7 +2626,6 @@ function App() {
                               )
                             }
                           />
-
                           <button
                             onClick={() =>
                               deleteParameter(editingFunction.id, index)
@@ -2012,15 +2660,9 @@ function App() {
               })
             }
           >
-            {currentBlocks.length === 0 && (
-              <div className="empty-message"></div>
-            )}
-
             <div
               className="zoom-canvas"
-              style={{
-                transform: `scale(${zoom})`,
-              }}
+              style={{ transform: `scale(${zoom})` }}
             >
               {renderBlockList(currentBlocks, "root")}
             </div>
@@ -2052,22 +2694,7 @@ function App() {
         {result && <pre className="result-message">{result}</pre>}
 
         <h3>JSON</h3>
-        <pre>
-          {JSON.stringify(
-            {
-              functions: functions.map((func) => ({
-                id: func.id,
-                type: "def",
-                name: func.name,
-                params: func.params,
-                children: func.children,
-              })),
-              blocks,
-            },
-            null,
-            2
-          )}
-        </pre>
+        <pre>{JSON.stringify(programJson, null, 2)}</pre>
       </aside>
 
       {functionToDeleteId !== null && (
@@ -2086,7 +2713,6 @@ function App() {
               >
                 Cancel
               </button>
-
               <button
                 className="confirm-delete-button"
                 onClick={confirmDeleteFunction}
