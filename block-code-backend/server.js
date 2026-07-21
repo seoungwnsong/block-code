@@ -9,8 +9,7 @@ app.use(cors());
 app.use(express.json());
 
 app.post('/check-flow', (req, res) => {
-    const blocks = req.body.blocks;
-    const output = runBlocks(blocks);
+    const output = runBlocks(req.body);   // pass the whole body { functions, blocks }
     res.json({ status: 'done', ...output });
 });
 
