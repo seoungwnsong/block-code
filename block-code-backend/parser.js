@@ -89,19 +89,22 @@ function parse(input) {
         return left;
     }
     function parseMulDiv() {
-        let left = parsePower();
-        while (peek().type === 'op' && (peek().value === '*' || peek().value === '/' || peek().value === '%')) { const op = next().value; left = new BinaryOperator(left, op, parsePower()); }
+        let left = parseUnary();
+        while (peek().type === 'op' && (peek().value === '*' || peek().value === '/' || peek().value === '%')) { const op = next().value; left = new BinaryOperator(left, op, parseUnary()); }
         return left;
     }
-    function parsePower() {
-        const left = parseUnary();
-        if (peek().type === 'op' && peek().value === '**') { next(); return new BinaryOperator(left, '**', parsePower()); }
-        return left;
-    }
+    // Python binds ** tighter than unary minus: -2 ** 2 is -4, not 4.
+    // So parseUnary sits ABOVE parsePower, and parsePower takes parseUnary on
+    // its right (keeps 2 ** -1 working) which also gives right-associativity.
     function parseUnary() {
         if (peek().type === 'op' && peek().value === '-') { next(); const operand = parseUnary(); return { evaluate: env => -operand.evaluate(env) }; }
         if (peek().type === 'op' && peek().value === '+') { next(); return parseUnary(); }
-        return parseAtom();
+        return parsePower();
+    }
+    function parsePower() {
+        const left = parseAtom();
+        if (peek().type === 'op' && peek().value === '**') { next(); return new BinaryOperator(left, '**', parseUnary()); }
+        return left;
     }
     function parseAtom() {
         const t = peek();

@@ -107,6 +107,8 @@ class For extends Statement {
     }
 }
 
+const MAX_ITERATIONS = 10000;
+
 class While extends Statement {
     constructor(test, body) {
         super();
@@ -114,7 +116,11 @@ class While extends Statement {
         this.body = body;
     }
     evaluate(env) {
+        let iterations = 0;
         while (this.test.evaluate(env)) {
+            if (++iterations > MAX_ITERATIONS) {
+                throw new Error(`While loop exceeded ${MAX_ITERATIONS} iterations — possible infinite loop`);
+            }
             for (const stmt of this.body) {
                 stmt.evaluate(env);
             }
