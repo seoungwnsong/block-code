@@ -1,5 +1,7 @@
-const { BinaryOperator } = require('./operations');
+const { BinaryOperator, Compare } = require('./operations');
 const { num, Booleans, Strings } = require('./permitivedatatypes');
+// function.js requires nothing, so this direction adds no cycle.
+const { Call } = require('./function');
 
 function tokenize(input) {
     const s = String(input);
@@ -43,6 +45,8 @@ function tokenize(input) {
         const two = s.slice(i, i + 2);
         if (['**', '==', '!=', '<=', '>='].includes(two)) { tokens.push({ type: 'op', value: two }); i += 2; continue; }
 
+        // A1: needed to separate function-call arguments
+        if (c === ',') { tokens.push({ type: 'comma' }); i++; continue; }
         if (c === '(') { tokens.push({ type: 'lparen' }); i++; continue; }
         if (c === ')') { tokens.push({ type: 'rparen' }); i++; continue; }
         if ('+-*/%<>'.includes(c)) { tokens.push({ type: 'op', value: c }); i++; continue; }
@@ -77,11 +81,20 @@ function parse(input) {
         if (peek().type === 'op' && peek().value === 'not') { next(); const operand = parseNot(); return { evaluate: env => !operand.evaluate(env) }; }
         return parseComparison();
     }
+    // #18: collect the whole chain into ONE Compare node.
+    // Nesting BinaryOperators made `3 < 2 < 1` evaluate as `(3 < 2) < 1`
+    // -> `false < 1` -> `0 < 1` -> true. Compare handles it Python-style.
     function parseComparison() {
-        let left = parseAddSub();
+        const left = parseAddSub();
         const cmp = ['==', '!=', '<', '>', '<=', '>='];
-        while (peek().type === 'op' && cmp.includes(peek().value)) { const op = next().value; left = new BinaryOperator(left, op, parseAddSub()); }
-        return left;
+        if (!(peek().type === 'op' && cmp.includes(peek().value))) return left;
+
+        const pairs = [];
+        while (peek().type === 'op' && cmp.includes(peek().value)) {
+            const op = next().value;
+            pairs.push([op, parseAddSub()]);
+        }
+        return new Compare(left, pairs);
     }
     function parseAddSub() {
         let left = parseMulDiv();
@@ -114,7 +127,23 @@ function parse(input) {
         if (t.type === 'ident') {
             next();
             const name = t.value;
-            return { evaluate: env => { if (!(name in env)) throw new Error(`Undefined variable: ${name}`); return env[name]; } };
+
+            // A1: an identifier followed by '(' is a CALL, not a variable read.
+            // Without this, `add(2, 3)` failed at the tokenizer on the comma.
+            if (peek().type === 'lparen') {
+                next();
+                const args = [];
+                if (peek().type !== 'rparen') {
+                    args.push(parseExpr());
+                    while (peek().type === 'comma') { next(); args.push(parseExpr()); }
+                }
+                expect('rparen');
+                return new Call(name, args);
+            }
+
+            // #20: hasOwn, not `in` — `in` walks the prototype chain, so a bare
+            // `constructor` or `toString` would resolve as a defined variable.
+            return { evaluate: env => { if (!Object.hasOwn(env, name)) throw new Error(`Undefined variable: ${name}`); return env[name]; } };
         }
         if (t.type === 'lparen') { next(); const e = parseExpr(); expect('rparen'); return e; }
         throw new Error(`Unexpected token in expression: ${input}`);

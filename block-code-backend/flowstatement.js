@@ -1,3 +1,6 @@
+// function.js imports nothing, so this direction is safe — no circular require.
+const { ReturnSignal } = require('./function');
+
 class Statement {
     evaluate() {}
 }
@@ -43,23 +46,30 @@ class ParallelAssign extends Statement {
         if (this.targets.length !== this.values.length) {
             throw new TypeError("Targets and values must be same length");
         }
-        const temp = {};
+        // #20: no Object.prototype keys leaking into the staging object
+        const temp = Object.create(null);
         for (let i = 0; i < this.values.length; i++) {
             temp[this.targets[i]] = this.values[i].evaluate(env);
         }
-        for (const key in temp) {
+        for (const key of Object.keys(temp)) {
             env[key] = temp[key];
         }
     }
 }
 
+// #16: Print writes into a per-run output array instead of monkey-patching
+// the global console.log. If no array is supplied it falls back to console.log
+// so the class still works standalone.
 class Print extends Statement {
-    constructor(value) {
+    constructor(value, output = null) {
         super();
         this.value = value;
+        this.output = output;
     }
     evaluate(env) {
-        console.log(this.value.evaluate(env));
+        const text = String(this.value.evaluate(env));
+        if (this.output) this.output.push(text);
+        else console.log(text);
     }
 }
 
@@ -141,7 +151,15 @@ class TaC extends Statement {
                 stmt.evaluate(env);
             }
         } catch (e) {
-            env[this.error] = e;
+            // #15: a `return` inside try is a control-flow signal, not an error.
+            // Without this the catch block swallows it and the function never returns.
+            if (e instanceof ReturnSignal) throw e;
+
+            // A3: an Error object serializes to {} through res.json(), so the
+            // catch variable showed as an empty object in the variables panel.
+            // Bind the message string — this also makes `print(error)` behave
+            // like Python's `print(err)`.
+            env[this.error] = e instanceof Error ? e.message : String(e);
             for (const stmt of this.handler) {
                 stmt.evaluate(env);
             }
@@ -149,5 +167,19 @@ class TaC extends Statement {
     }
 }
 
-module.exports = { If, Assign, ParallelAssign, Print, ForRange, For, While, TaC };
+// #14: lets a bare calculation / logic / call sit in a statement slot.
+// A user may call a function purely for its side effects.
+class ExpressionStatement extends Statement {
+    constructor(expression) {
+        super();
+        this.expression = expression;
+    }
+    evaluate(env) {
+        this.expression.evaluate(env);
+    }
+}
 
+module.exports = {
+    Statement, If, Assign, ParallelAssign, Print,
+    ForRange, For, While, TaC, ExpressionStatement
+};
