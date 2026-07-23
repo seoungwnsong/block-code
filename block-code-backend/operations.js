@@ -9,18 +9,39 @@ class BinaryOperator extends Expr {
     }
     evaluate(env) {
         const left = this.left.evaluate(env);
+
+        // #19: short-circuit BEFORE touching the right side, so
+        // `false and (1 / 0)` no longer throws. (BoolOp already
+        // short-circuits via .every/.some — this is the parser path.)
+        if (this.op === "and") return left && this.right.evaluate(env);
+        if (this.op === "or")  return left || this.right.evaluate(env);
+
         const right = this.right.evaluate(env);
+
+        const isString = (v) => typeof v === 'string';
+
         switch (this.op) {
-            case "+":   return left + right;
+            case "+": {
+                const leftIsStr  = isString(left);
+                const rightIsStr = isString(right);
+                if (leftIsStr && rightIsStr)   return left + right;  // string concat
+                if (!leftIsStr && !rightIsStr) return left + right;  // numeric add
+                // mismatch
+                throw new TypeError(
+                    `Unsupported operand types for +: '${leftIsStr ? 'str' : 'num'}' and '${rightIsStr ? 'str' : 'num'}'`
+                );
+            }
             case "-":   return left - right;
             case "*":   return left * right;
             case "/":
                 if (right === 0) throw new Error("Division by zero");
                 return left / right;
-            case "%":   return left % right;
+            case "%":
+                // A2: was returning NaN, which silently poisons every
+                // downstream calculation. Match the behaviour of "/".
+                if (right === 0) throw new Error("Modulo by zero");
+                return left % right;
             case "**":  return left ** right;
-            case "and": return left && right;
-            case "or":  return left || right;
             case "==":  return left === right;
             case "!=":  return left !== right;
             case "<":   return left < right;

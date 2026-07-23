@@ -23,9 +23,9 @@ class UserFunction {
 
         // Fresh local scope. Seed it with the other registered functions
         // (supports nested / recursive / mutually recursive calls), then bind params.
-        const localEnv = {};
+        const localEnv = Object.create(null);   // #20
         if (this.globalEnv) {
-            for (const key in this.globalEnv) {
+            for (const key of Object.keys(this.globalEnv)) {
                 if (this.globalEnv[key] instanceof UserFunction) localEnv[key] = this.globalEnv[key];
             }
         }
@@ -61,7 +61,7 @@ class Call {
         this.args = args;     // array of Expr
     }
     evaluate(env) {
-        const fn = env[this.name];
+        const fn = Object.hasOwn(env, this.name) ? env[this.name] : undefined;   // #20
         if (!(fn instanceof UserFunction)) {
             throw new Error(`Undefined function: ${this.name}`);
         }
