@@ -4,7 +4,8 @@ import "./App.css";
 
 type DataType = "int" | "float" | "bool" | "string";
 type MathOperator = "+" | "-" | "*" | "/" | "%";
-type LogicOperator = "==" | "!=" | ">" | "<" | ">=" | "<=" | "and" | "or";
+type ComparisonOperator = "==" | "!=" | ">" | "<" | ">=" | "<=";
+type LogicOperator = ComparisonOperator | "and" | "or";
 
 type LiteralExpression = {
   id: number;
@@ -32,12 +33,32 @@ type CalculationExpression = {
   right: Expression;
 };
 
+type CalculationChainExpression = {
+  id: number;
+  type: "calculationChain";
+  first: Expression;
+  operations: {
+    operator: MathOperator;
+    value: Expression;
+  }[];
+};
+
 type LogicExpression = {
   id: number;
   type: "logic";
   left: Expression;
   operator: LogicOperator;
   right: Expression;
+};
+
+type ComparisonChainExpression = {
+  id: number;
+  type: "comparisonChain";
+  first: Expression;
+  comparisons: {
+    operator: ComparisonOperator;
+    right: Expression;
+  }[];
 };
 
 type CallExpression = {
@@ -53,13 +74,39 @@ type Expression =
   | LiteralExpression
   | VariableReferenceExpression
   | CalculationExpression
+  | CalculationChainExpression
   | LogicExpression
+  | ComparisonChainExpression
   | CallExpression;
 
 type ExpressionStatementBlock =
   | CalculationExpression
+  | CalculationChainExpression
   | LogicExpression
+  | ComparisonChainExpression
   | CallExpression;
+
+type ElifBranch = {
+  id: number;
+  condition: Expression;
+  children: Block[];
+};
+
+type IfBlock = {
+  id: number;
+  type: "if";
+  condition: Expression;
+  children: Block[];
+  elifBranches: ElifBranch[];
+  elseChildren: Block[] | null;
+};
+
+type ParallelAssignmentBlock = {
+  id: number;
+  type: "parallelAssign";
+  targets: string[];
+  values: Expression[];
+};
 
 type Block =
   | {
@@ -68,6 +115,7 @@ type Block =
       name: string;
       value: Expression;
     }
+  | ParallelAssignmentBlock
   | ExpressionStatementBlock
   | {
       id: number;
@@ -79,12 +127,7 @@ type Block =
       type: "return";
       value: Expression;
     }
-  | {
-      id: number;
-      type: "if";
-      condition: Expression;
-      children: Block[];
-    }
+  | IfBlock
   | {
       id: number;
       type: "while";
@@ -123,6 +166,17 @@ type ListDropTarget =
     }
   | {
       area: "children";
+      parentId: number;
+      index: number;
+    }
+  | {
+      area: "elifChildren";
+      parentId: number;
+      branchId: number;
+      index: number;
+    }
+  | {
+      area: "elseChildren";
       parentId: number;
       index: number;
     }
@@ -166,10 +220,28 @@ type JsonExpression =
     }
   | {
       id: number;
+      type: "calculationChain";
+      first: JsonExpression;
+      operations: {
+        operator: MathOperator;
+        value: JsonExpression;
+      }[];
+    }
+  | {
+      id: number;
       type: "logic";
       left: JsonExpression;
       operator: LogicOperator;
       right: JsonExpression;
+    }
+  | {
+      id: number;
+      type: "comparisonChain";
+      first: JsonExpression;
+      comparisons: {
+        operator: ComparisonOperator;
+        right: JsonExpression;
+      }[];
     }
   | {
       id: number;
@@ -182,6 +254,12 @@ type JsonExpression =
 
 type JsonCondition = string | JsonExpression;
 
+type JsonElifBranch = {
+  id: number;
+  condition: JsonCondition;
+  children: JsonBlock[];
+};
+
 type JsonBlock =
   | {
       id: number;
@@ -189,7 +267,23 @@ type JsonBlock =
       name: string;
       value: JsonExpression;
     }
-  | Extract<JsonExpression, { type: "calculation" | "logic" | "call" }>
+  | {
+      id: number;
+      type: "parallelAssign";
+      targets: string[];
+      values: JsonExpression[];
+    }
+  | Extract<
+      JsonExpression,
+      {
+        type:
+          | "calculation"
+          | "calculationChain"
+          | "logic"
+          | "comparisonChain"
+          | "call";
+      }
+    >
   | {
       id: number;
       type: "print";
@@ -205,6 +299,8 @@ type JsonBlock =
       type: "if";
       condition: JsonCondition;
       children: JsonBlock[];
+      elifBranches: JsonElifBranch[];
+      elseChildren: JsonBlock[] | null;
     }
   | {
       id: number;
@@ -375,6 +471,26 @@ function createCalculationExpression(id = makeId()): CalculationExpression {
   };
 }
 
+function createCalculationChainExpression(
+  source?: CalculationExpression,
+  id = source?.id ?? makeId()
+): CalculationChainExpression {
+  return {
+    id,
+    type: "calculationChain",
+    first: source?.left ?? createAtomicExpression(),
+    operations: source
+      ? [
+          { operator: source.operator, value: source.right },
+          { operator: source.operator, value: createAtomicExpression() },
+        ]
+      : [
+          { operator: "+", value: createAtomicExpression() },
+          { operator: "+", value: createAtomicExpression() },
+        ],
+  };
+}
+
 function createLogicExpression(id = makeId()): LogicExpression {
   return {
     id,
@@ -382,6 +498,31 @@ function createLogicExpression(id = makeId()): LogicExpression {
     left: createAtomicExpression(),
     operator: "==",
     right: createAtomicExpression(),
+  };
+}
+
+function createComparisonChainExpression(
+  source?: LogicExpression,
+  id = source?.id ?? makeId()
+): ComparisonChainExpression {
+  const operator: ComparisonOperator =
+    source && source.operator !== "and" && source.operator !== "or"
+      ? source.operator
+      : "==";
+
+  return {
+    id,
+    type: "comparisonChain",
+    first: source?.left ?? createAtomicExpression(),
+    comparisons: source
+      ? [
+          { operator, right: source.right },
+          { operator, right: createAtomicExpression() },
+        ]
+      : [
+          { operator: "==", right: createAtomicExpression() },
+          { operator: "==", right: createAtomicExpression() },
+        ],
   };
 }
 
@@ -408,11 +549,25 @@ function createBlock(type: BlockType): Block {
         value: createAtomicExpression(),
       };
 
+    case "parallelAssign":
+      return {
+        id,
+        type: "parallelAssign",
+        targets: ["a", "b"],
+        values: [createAtomicExpression(), createAtomicExpression()],
+      };
+
     case "calculation":
       return createCalculationExpression(id);
 
+    case "calculationChain":
+      return createCalculationChainExpression(undefined, id);
+
     case "logic":
       return createLogicExpression(id);
+
+    case "comparisonChain":
+      return createComparisonChainExpression(undefined, id);
 
     case "print":
       return {
@@ -434,6 +589,8 @@ function createBlock(type: BlockType): Block {
         type: "if",
         condition: createConditionExpression(),
         children: [],
+        elifBranches: [],
+        elseChildren: null,
       };
 
     case "while":
@@ -475,22 +632,35 @@ function createBlock(type: BlockType): Block {
   }
 }
 
-function isAtomicExpression(expression: Expression): expression is LiteralExpression | VariableReferenceExpression {
-  return expression.type === "literal" || expression.type === "variableReference";
+function isAtomicExpression(
+  expression: Expression
+): expression is LiteralExpression | VariableReferenceExpression {
+  return (
+    expression.type === "literal" ||
+    expression.type === "variableReference"
+  );
 }
 
-function isExpressionStatement(expression: Expression): expression is ExpressionStatementBlock {
+function isExpressionStatement(
+  expression: Expression
+): expression is ExpressionStatementBlock {
   return (
     expression.type === "calculation" ||
+    expression.type === "calculationChain" ||
     expression.type === "logic" ||
+    expression.type === "comparisonChain" ||
     expression.type === "call"
   );
 }
 
-function isExpressionStatementBlock(block: Block): block is ExpressionStatementBlock {
+function isExpressionStatementBlock(
+  block: Block
+): block is ExpressionStatementBlock {
   return (
     block.type === "calculation" ||
+    block.type === "calculationChain" ||
     block.type === "logic" ||
+    block.type === "comparisonChain" ||
     block.type === "call"
   );
 }
@@ -505,14 +675,37 @@ function expressionContainsId(expression: Expression, id: number): boolean {
     );
   }
 
+  if (expression.type === "calculationChain") {
+    return (
+      expressionContainsId(expression.first, id) ||
+      expression.operations.some((operation) =>
+        expressionContainsId(operation.value, id)
+      )
+    );
+  }
+
+  if (expression.type === "comparisonChain") {
+    return (
+      expressionContainsId(expression.first, id) ||
+      expression.comparisons.some((comparison) =>
+        expressionContainsId(comparison.right, id)
+      )
+    );
+  }
+
   if (expression.type === "call") {
-    return expression.args.some((argument) => expressionContainsId(argument, id));
+    return expression.args.some((argument) =>
+      expressionContainsId(argument, id)
+    );
   }
 
   return false;
 }
 
-function findExpressionById(expression: Expression, id: number): Expression | null {
+function findExpressionById(
+  expression: Expression,
+  id: number
+): Expression | null {
   if (expression.id === id) return expression;
 
   if (expression.type === "calculation" || expression.type === "logic") {
@@ -520,6 +713,26 @@ function findExpressionById(expression: Expression, id: number): Expression | nu
       findExpressionById(expression.left, id) ??
       findExpressionById(expression.right, id)
     );
+  }
+
+  if (expression.type === "calculationChain") {
+    const inFirst = findExpressionById(expression.first, id);
+    if (inFirst) return inFirst;
+
+    for (const operation of expression.operations) {
+      const found = findExpressionById(operation.value, id);
+      if (found) return found;
+    }
+  }
+
+  if (expression.type === "comparisonChain") {
+    const inFirst = findExpressionById(expression.first, id);
+    if (inFirst) return inFirst;
+
+    for (const comparison of expression.comparisons) {
+      const found = findExpressionById(comparison.right, id);
+      if (found) return found;
+    }
   }
 
   if (expression.type === "call") {
@@ -547,11 +760,33 @@ function updateExpressionById(
     };
   }
 
+  if (expression.type === "calculationChain") {
+    return {
+      ...expression,
+      first: updateExpressionById(expression.first, id, updater),
+      operations: expression.operations.map((operation) => ({
+        ...operation,
+        value: updateExpressionById(operation.value, id, updater),
+      })),
+    };
+  }
+
   if (expression.type === "logic") {
     return {
       ...expression,
       left: updateExpressionById(expression.left, id, updater),
       right: updateExpressionById(expression.right, id, updater),
+    };
+  }
+
+  if (expression.type === "comparisonChain") {
+    return {
+      ...expression,
+      first: updateExpressionById(expression.first, id, updater),
+      comparisons: expression.comparisons.map((comparison) => ({
+        ...comparison,
+        right: updateExpressionById(comparison.right, id, updater),
+      })),
     };
   }
 
@@ -579,10 +814,31 @@ function findExpressionInBlock(block: Block, id: number): Expression | null {
     case "return":
       return findExpressionById(block.value, id);
 
+    case "parallelAssign":
+      for (const value of block.values) {
+        const found = findExpressionById(value, id);
+        if (found) return found;
+      }
+      return null;
+
     case "if": {
       const inCondition = findExpressionById(block.condition, id);
       if (inCondition) return inCondition;
-      return findExpressionInBlocks(block.children, id);
+
+      const inChildren = findExpressionInBlocks(block.children, id);
+      if (inChildren) return inChildren;
+
+      for (const branch of block.elifBranches) {
+        const inBranchCondition = findExpressionById(branch.condition, id);
+        if (inBranchCondition) return inBranchCondition;
+
+        const inBranchChildren = findExpressionInBlocks(branch.children, id);
+        if (inBranchChildren) return inBranchChildren;
+      }
+
+      return block.elseChildren
+        ? findExpressionInBlocks(block.elseChildren, id)
+        : null;
     }
 
     case "while": {
@@ -610,7 +866,10 @@ function findExpressionInBlock(block: Block, id: number): Expression | null {
   }
 }
 
-function findExpressionInBlocks(blocks: Block[], id: number): Expression | null {
+function findExpressionInBlocks(
+  blocks: Block[],
+  id: number
+): Expression | null {
   for (const block of blocks) {
     const found = findExpressionInBlock(block, id);
     if (found) return found;
@@ -636,6 +895,14 @@ function updateExpressionsInBlock(
         value: updateExpressionById(block.value, id, updater),
       };
 
+    case "parallelAssign":
+      return {
+        ...block,
+        values: block.values.map((value) =>
+          updateExpressionById(value, id, updater)
+        ),
+      };
+
     case "print":
       return {
         ...block,
@@ -653,6 +920,15 @@ function updateExpressionsInBlock(
         ...block,
         condition: updateExpressionById(block.condition, id, updater),
         children: updateExpressionsInBlocks(block.children, id, updater),
+        elifBranches: block.elifBranches.map((branch) => ({
+          ...branch,
+          condition: updateExpressionById(branch.condition, id, updater),
+          children: updateExpressionsInBlocks(branch.children, id, updater),
+        })),
+        elseChildren:
+          block.elseChildren === null
+            ? null
+            : updateExpressionsInBlocks(block.elseChildren, id, updater),
       };
 
     case "while":
@@ -673,7 +949,11 @@ function updateExpressionsInBlock(
     case "tryCatch":
       return {
         ...block,
-        tryChildren: updateExpressionsInBlocks(block.tryChildren, id, updater),
+        tryChildren: updateExpressionsInBlocks(
+          block.tryChildren,
+          id,
+          updater
+        ),
         catchChildren: updateExpressionsInBlocks(
           block.catchChildren,
           id,
@@ -698,7 +978,20 @@ function blockContainsExpressionId(block: Block, id: number): boolean {
 function blockContainsBlockId(block: Block, id: number): boolean {
   if (block.id === id) return true;
 
-  if (block.type === "if" || block.type === "while" || block.type === "for") {
+  if (block.type === "if") {
+    return (
+      block.children.some((child) => blockContainsBlockId(child, id)) ||
+      block.elifBranches.some((branch) =>
+        branch.children.some((child) => blockContainsBlockId(child, id))
+      ) ||
+      (block.elseChildren?.some((child) =>
+        blockContainsBlockId(child, id)
+      ) ??
+        false)
+    );
+  }
+
+  if (block.type === "while" || block.type === "for") {
     return block.children.some((child) => blockContainsBlockId(child, id));
   }
 
@@ -727,11 +1020,35 @@ function insertIntoBlocks(
     if (block.id === target.parentId) {
       if (
         target.area === "children" &&
-        (block.type === "if" || block.type === "while" || block.type === "for")
+        (block.type === "if" ||
+          block.type === "while" ||
+          block.type === "for")
       ) {
         const children = [...block.children];
         children.splice(target.index, 0, newBlock);
         return { ...block, children };
+      }
+
+      if (target.area === "elifChildren" && block.type === "if") {
+        return {
+          ...block,
+          elifBranches: block.elifBranches.map((branch) => {
+            if (branch.id !== target.branchId) return branch;
+            const children = [...branch.children];
+            children.splice(target.index, 0, newBlock);
+            return { ...branch, children };
+          }),
+        };
+      }
+
+      if (
+        target.area === "elseChildren" &&
+        block.type === "if" &&
+        block.elseChildren !== null
+      ) {
+        const elseChildren = [...block.elseChildren];
+        elseChildren.splice(target.index, 0, newBlock);
+        return { ...block, elseChildren };
       }
 
       if (target.area === "tryChildren" && block.type === "tryCatch") {
@@ -747,7 +1064,22 @@ function insertIntoBlocks(
       }
     }
 
-    if (block.type === "if" || block.type === "while" || block.type === "for") {
+    if (block.type === "if") {
+      return {
+        ...block,
+        children: insertIntoBlocks(block.children, target, newBlock),
+        elifBranches: block.elifBranches.map((branch) => ({
+          ...branch,
+          children: insertIntoBlocks(branch.children, target, newBlock),
+        })),
+        elseChildren:
+          block.elseChildren === null
+            ? null
+            : insertIntoBlocks(block.elseChildren, target, newBlock),
+      };
+    }
+
+    if (block.type === "while" || block.type === "for") {
       return {
         ...block,
         children: insertIntoBlocks(block.children, target, newBlock),
@@ -758,7 +1090,11 @@ function insertIntoBlocks(
       return {
         ...block,
         tryChildren: insertIntoBlocks(block.tryChildren, target, newBlock),
-        catchChildren: insertIntoBlocks(block.catchChildren, target, newBlock),
+        catchChildren: insertIntoBlocks(
+          block.catchChildren,
+          target,
+          newBlock
+        ),
       };
     }
 
@@ -779,7 +1115,34 @@ function removeBlockById(
         return null;
       }
 
-      if (block.type === "if" || block.type === "while" || block.type === "for") {
+      if (block.type === "if") {
+        const childResult = removeBlockById(block.children, id);
+        if (childResult.removedBlock) removedBlock = childResult.removedBlock;
+
+        const elifBranches = block.elifBranches.map((branch) => {
+          const result = removeBlockById(branch.children, id);
+          if (result.removedBlock) removedBlock = result.removedBlock;
+          return { ...branch, children: result.updatedBlocks };
+        });
+
+        const elseResult =
+          block.elseChildren === null
+            ? null
+            : removeBlockById(block.elseChildren, id);
+
+        if (elseResult?.removedBlock) {
+          removedBlock = elseResult.removedBlock;
+        }
+
+        return {
+          ...block,
+          children: childResult.updatedBlocks,
+          elifBranches,
+          elseChildren: elseResult?.updatedBlocks ?? null,
+        };
+      }
+
+      if (block.type === "while" || block.type === "for") {
         const result = removeBlockById(block.children, id);
         if (result.removedBlock) removedBlock = result.removedBlock;
         return { ...block, children: result.updatedBlocks };
@@ -810,7 +1173,22 @@ function findBlockById(blockList: Block[], id: number): Block | null {
   for (const block of blockList) {
     if (block.id === id) return block;
 
-    if (block.type === "if" || block.type === "while" || block.type === "for") {
+    if (block.type === "if") {
+      const inChildren = findBlockById(block.children, id);
+      if (inChildren) return inChildren;
+
+      for (const branch of block.elifBranches) {
+        const inBranch = findBlockById(branch.children, id);
+        if (inBranch) return inBranch;
+      }
+
+      if (block.elseChildren) {
+        const inElse = findBlockById(block.elseChildren, id);
+        if (inElse) return inElse;
+      }
+    }
+
+    if (block.type === "while" || block.type === "for") {
       const found = findBlockById(block.children, id);
       if (found) return found;
     }
@@ -831,18 +1209,63 @@ function findBlockLocation(
   blockList: Block[],
   id: number,
   area: ListArea = "root",
-  parentId?: number
+  parentId?: number,
+  branchId?: number
 ): ListDropTarget | null {
   for (let index = 0; index < blockList.length; index += 1) {
     const block = blockList[index];
 
     if (block.id === id) {
       if (area === "root") return { area: "root", index };
+      if (area === "elifChildren") {
+        return {
+          area,
+          parentId: parentId as number,
+          branchId: branchId as number,
+          index,
+        };
+      }
       return { area, parentId: parentId as number, index };
     }
 
-    if (block.type === "if" || block.type === "while" || block.type === "for") {
-      const found = findBlockLocation(block.children, id, "children", block.id);
+    if (block.type === "if") {
+      const inChildren = findBlockLocation(
+        block.children,
+        id,
+        "children",
+        block.id
+      );
+      if (inChildren) return inChildren;
+
+      for (const branch of block.elifBranches) {
+        const inBranch = findBlockLocation(
+          branch.children,
+          id,
+          "elifChildren",
+          block.id,
+          branch.id
+        );
+        if (inBranch) return inBranch;
+      }
+
+      if (block.elseChildren) {
+        const inElse = findBlockLocation(
+          block.elseChildren,
+          id,
+          "elseChildren",
+          block.id
+        );
+        if (inElse) return inElse;
+      }
+    }
+
+    if (block.type === "while" || block.type === "for") {
+      const found = findBlockLocation(
+        block.children,
+        id,
+        "children",
+        block.id
+      );
       if (found) return found;
     }
 
@@ -868,9 +1291,19 @@ function findBlockLocation(
   return null;
 }
 
-function isSameListTarget(source: ListDropTarget, target: ListDropTarget) {
+function isSameListTarget(
+  source: ListDropTarget,
+  target: ListDropTarget
+): boolean {
   if (source.area !== target.area) return false;
   if (source.area === "root" && target.area === "root") return true;
+
+  if (source.area === "elifChildren" && target.area === "elifChildren") {
+    return (
+      source.parentId === target.parentId &&
+      source.branchId === target.branchId
+    );
+  }
 
   return (
     "parentId" in source &&
@@ -921,6 +1354,27 @@ function syncExpressionFunctionCalls(
     };
   }
 
+  if (expression.type === "calculationChain") {
+    return {
+      ...expression,
+      first: syncExpressionFunctionCalls(
+        expression.first,
+        functionId,
+        nextName,
+        nextParams
+      ),
+      operations: expression.operations.map((operation) => ({
+        ...operation,
+        value: syncExpressionFunctionCalls(
+          operation.value,
+          functionId,
+          nextName,
+          nextParams
+        ),
+      })),
+    };
+  }
+
   if (expression.type === "logic") {
     return {
       ...expression,
@@ -939,9 +1393,35 @@ function syncExpressionFunctionCalls(
     };
   }
 
+  if (expression.type === "comparisonChain") {
+    return {
+      ...expression,
+      first: syncExpressionFunctionCalls(
+        expression.first,
+        functionId,
+        nextName,
+        nextParams
+      ),
+      comparisons: expression.comparisons.map((comparison) => ({
+        ...comparison,
+        right: syncExpressionFunctionCalls(
+          comparison.right,
+          functionId,
+          nextName,
+          nextParams
+        ),
+      })),
+    };
+  }
+
   if (expression.type === "call") {
     const recursivelyUpdatedArgs = expression.args.map((argument) =>
-      syncExpressionFunctionCalls(argument, functionId, nextName, nextParams)
+      syncExpressionFunctionCalls(
+        argument,
+        functionId,
+        nextName,
+        nextParams
+      )
     );
 
     if (expression.functionId !== functionId) {
@@ -953,7 +1433,8 @@ function syncExpressionFunctionCalls(
       name: nextName,
       paramNames: [...nextParams],
       args: nextParams.map(
-        (_, index) => recursivelyUpdatedArgs[index] ?? createAtomicExpression()
+        (_, index) =>
+          recursivelyUpdatedArgs[index] ?? createAtomicExpression()
       ),
     };
   }
@@ -991,6 +1472,19 @@ function syncFunctionCalls(
           ),
         };
 
+      case "parallelAssign":
+        return {
+          ...block,
+          values: block.values.map((value) =>
+            syncExpressionFunctionCalls(
+              value,
+              functionId,
+              nextName,
+              nextParams
+            )
+          ),
+        };
+
       case "if":
         return {
           ...block,
@@ -1006,6 +1500,30 @@ function syncFunctionCalls(
             nextName,
             nextParams
           ),
+          elifBranches: block.elifBranches.map((branch) => ({
+            ...branch,
+            condition: syncExpressionFunctionCalls(
+              branch.condition,
+              functionId,
+              nextName,
+              nextParams
+            ),
+            children: syncFunctionCalls(
+              branch.children,
+              functionId,
+              nextName,
+              nextParams
+            ),
+          })),
+          elseChildren:
+            block.elseChildren === null
+              ? null
+              : syncFunctionCalls(
+                  block.elseChildren,
+                  functionId,
+                  nextName,
+                  nextParams
+                ),
         };
 
       case "while":
@@ -1079,16 +1597,62 @@ function removeFunctionCallsFromExpression(
   if (expression.type === "calculation") {
     return {
       ...expression,
-      left: removeFunctionCallsFromExpression(expression.left, functionId),
-      right: removeFunctionCallsFromExpression(expression.right, functionId),
+      left: removeFunctionCallsFromExpression(
+        expression.left,
+        functionId
+      ),
+      right: removeFunctionCallsFromExpression(
+        expression.right,
+        functionId
+      ),
+    };
+  }
+
+  if (expression.type === "calculationChain") {
+    return {
+      ...expression,
+      first: removeFunctionCallsFromExpression(
+        expression.first,
+        functionId
+      ),
+      operations: expression.operations.map((operation) => ({
+        ...operation,
+        value: removeFunctionCallsFromExpression(
+          operation.value,
+          functionId
+        ),
+      })),
     };
   }
 
   if (expression.type === "logic") {
     return {
       ...expression,
-      left: removeFunctionCallsFromExpression(expression.left, functionId),
-      right: removeFunctionCallsFromExpression(expression.right, functionId),
+      left: removeFunctionCallsFromExpression(
+        expression.left,
+        functionId
+      ),
+      right: removeFunctionCallsFromExpression(
+        expression.right,
+        functionId
+      ),
+    };
+  }
+
+  if (expression.type === "comparisonChain") {
+    return {
+      ...expression,
+      first: removeFunctionCallsFromExpression(
+        expression.first,
+        functionId
+      ),
+      comparisons: expression.comparisons.map((comparison) => ({
+        ...comparison,
+        right: removeFunctionCallsFromExpression(
+          comparison.right,
+          functionId
+        ),
+      })),
     };
   }
 
@@ -1104,10 +1668,14 @@ function removeFunctionCallsFromExpression(
   return expression;
 }
 
-function removeFunctionCalls(blockList: Block[], functionId: number): Block[] {
+function removeFunctionCalls(
+  blockList: Block[],
+  functionId: number
+): Block[] {
   return blockList
     .filter(
-      (block) => !(block.type === "call" && block.functionId === functionId)
+      (block) =>
+        !(block.type === "call" && block.functionId === functionId)
     )
     .map((block) => {
       if (isExpressionStatementBlock(block)) {
@@ -1123,7 +1691,18 @@ function removeFunctionCalls(blockList: Block[], functionId: number): Block[] {
         case "return":
           return {
             ...block,
-            value: removeFunctionCallsFromExpression(block.value, functionId),
+            value: removeFunctionCallsFromExpression(
+              block.value,
+              functionId
+            ),
+          };
+
+        case "parallelAssign":
+          return {
+            ...block,
+            values: block.values.map((value) =>
+              removeFunctionCallsFromExpression(value, functionId)
+            ),
           };
 
         case "if":
@@ -1134,6 +1713,24 @@ function removeFunctionCalls(blockList: Block[], functionId: number): Block[] {
               functionId
             ),
             children: removeFunctionCalls(block.children, functionId),
+            elifBranches: block.elifBranches.map((branch) => ({
+              ...branch,
+              condition: removeFunctionCallsFromExpression(
+                branch.condition,
+                functionId
+              ),
+              children: removeFunctionCalls(
+                branch.children,
+                functionId
+              ),
+            })),
+            elseChildren:
+              block.elseChildren === null
+                ? null
+                : removeFunctionCalls(
+                    block.elseChildren,
+                    functionId
+                  ),
           };
 
         case "while":
@@ -1149,15 +1746,24 @@ function removeFunctionCalls(blockList: Block[], functionId: number): Block[] {
         case "for":
           return {
             ...block,
-            start: removeFunctionCallsFromExpression(block.start, functionId),
-            end: removeFunctionCallsFromExpression(block.end, functionId),
+            start: removeFunctionCallsFromExpression(
+              block.start,
+              functionId
+            ),
+            end: removeFunctionCallsFromExpression(
+              block.end,
+              functionId
+            ),
             children: removeFunctionCalls(block.children, functionId),
           };
 
         case "tryCatch":
           return {
             ...block,
-            tryChildren: removeFunctionCalls(block.tryChildren, functionId),
+            tryChildren: removeFunctionCalls(
+              block.tryChildren,
+              functionId
+            ),
             catchChildren: removeFunctionCalls(
               block.catchChildren,
               functionId
@@ -1193,6 +1799,17 @@ function serializeExpression(expression: Expression): JsonExpression {
         right: serializeExpression(expression.right),
       };
 
+    case "calculationChain":
+      return {
+        id: expression.id,
+        type: "calculationChain",
+        first: serializeExpression(expression.first),
+        operations: expression.operations.map((operation) => ({
+          operator: operation.operator,
+          value: serializeExpression(operation.value),
+        })),
+      };
+
     case "logic":
       return {
         id: expression.id,
@@ -1200,6 +1817,17 @@ function serializeExpression(expression: Expression): JsonExpression {
         left: serializeExpression(expression.left),
         operator: expression.operator,
         right: serializeExpression(expression.right),
+      };
+
+    case "comparisonChain":
+      return {
+        id: expression.id,
+        type: "comparisonChain",
+        first: serializeExpression(expression.first),
+        comparisons: expression.comparisons.map((comparison) => ({
+          operator: comparison.operator,
+          right: serializeExpression(comparison.right),
+        })),
       };
 
     case "call":
@@ -1223,7 +1851,14 @@ function serializeBlock(block: Block): JsonBlock {
   if (isExpressionStatementBlock(block)) {
     return serializeExpression(block) as Extract<
       JsonExpression,
-      { type: "calculation" | "logic" | "call" }
+      {
+        type:
+          | "calculation"
+          | "calculationChain"
+          | "logic"
+          | "comparisonChain"
+          | "call";
+      }
     >;
   }
 
@@ -1234,6 +1869,14 @@ function serializeBlock(block: Block): JsonBlock {
         type: "variable",
         name: block.name,
         value: serializeExpression(block.value),
+      };
+
+    case "parallelAssign":
+      return {
+        id: block.id,
+        type: "parallelAssign",
+        targets: [...block.targets],
+        values: block.values.map(serializeExpression),
       };
 
     case "print":
@@ -1256,6 +1899,15 @@ function serializeBlock(block: Block): JsonBlock {
         type: "if",
         condition: serializeCondition(block.condition),
         children: block.children.map(serializeBlock),
+        elifBranches: block.elifBranches.map((branch) => ({
+          id: branch.id,
+          condition: serializeCondition(branch.condition),
+          children: branch.children.map(serializeBlock),
+        })),
+        elseChildren:
+          block.elseChildren === null
+            ? null
+            : block.elseChildren.map(serializeBlock),
       };
 
     case "while":
@@ -1287,6 +1939,21 @@ function serializeBlock(block: Block): JsonBlock {
   }
 }
 
+function collectConditionErrors(
+  condition: Expression,
+  location: string,
+  errors: string[]
+) {
+  if (isAtomicExpression(condition)) {
+    if (condition.source.trim() === "") {
+      errors.push(`${location}: Condition cannot be empty.`);
+    }
+    return;
+  }
+
+  collectExpressionErrors(condition, location, errors);
+}
+
 function collectExpressionErrors(
   expression: Expression,
   location: string,
@@ -1307,12 +1974,40 @@ function collectExpressionErrors(
     return;
   }
 
+  if (expression.type === "calculationChain") {
+    collectExpressionErrors(expression.first, `${location}.first`, errors);
+    expression.operations.forEach((operation, index) =>
+      collectExpressionErrors(
+        operation.value,
+        `${location}.operations[${index}].value`,
+        errors
+      )
+    );
+    return;
+  }
+
+  if (expression.type === "comparisonChain") {
+    collectExpressionErrors(expression.first, `${location}.first`, errors);
+    expression.comparisons.forEach((comparison, index) =>
+      collectExpressionErrors(
+        comparison.right,
+        `${location}.comparisons[${index}].right`,
+        errors
+      )
+    );
+    return;
+  }
+
   expression.args.forEach((argument, index) =>
     collectExpressionErrors(argument, `${location}.args[${index}]`, errors)
   );
 }
 
-function collectBlockErrors(block: Block, location: string, errors: string[]) {
+function collectBlockErrors(
+  block: Block,
+  location: string,
+  errors: string[]
+) {
   if (isExpressionStatementBlock(block)) {
     collectExpressionErrors(block, location, errors);
     return;
@@ -1320,22 +2015,86 @@ function collectBlockErrors(block: Block, location: string, errors: string[]) {
 
   switch (block.type) {
     case "variable":
+      if (block.name.trim() === "") {
+        errors.push(`${location}.name: Variable name cannot be empty.`);
+      }
+      collectExpressionErrors(block.value, `${location}.value`, errors);
+      return;
+
+    case "parallelAssign":
+      if (block.targets.length !== block.values.length) {
+        errors.push(
+          `${location}: Parallel assignment targets and values must match.`
+        );
+      }
+      block.targets.forEach((target, index) => {
+        if (target.trim() === "") {
+          errors.push(
+            `${location}.targets[${index}]: Variable name cannot be empty.`
+          );
+        }
+      });
+      block.values.forEach((value, index) =>
+        collectExpressionErrors(
+          value,
+          `${location}.values[${index}]`,
+          errors
+        )
+      );
+      return;
+
     case "print":
     case "return":
       collectExpressionErrors(block.value, `${location}.value`, errors);
       return;
 
     case "if":
+      collectConditionErrors(
+        block.condition,
+        `${location}.condition`,
+        errors
+      );
+      block.children.forEach((child, index) =>
+        collectBlockErrors(child, `${location}.children[${index}]`, errors)
+      );
+      block.elifBranches.forEach((branch, branchIndex) => {
+        collectConditionErrors(
+          branch.condition,
+          `${location}.elifBranches[${branchIndex}].condition`,
+          errors
+        );
+        branch.children.forEach((child, childIndex) =>
+          collectBlockErrors(
+            child,
+            `${location}.elifBranches[${branchIndex}].children[${childIndex}]`,
+            errors
+          )
+        );
+      });
+      block.elseChildren?.forEach((child, index) =>
+        collectBlockErrors(
+          child,
+          `${location}.elseChildren[${index}]`,
+          errors
+        )
+      );
+      return;
+
     case "while":
-      if (!isAtomicExpression(block.condition)) {
-        collectExpressionErrors(block.condition, `${location}.condition`, errors);
-      }
+      collectConditionErrors(
+        block.condition,
+        `${location}.condition`,
+        errors
+      );
       block.children.forEach((child, index) =>
         collectBlockErrors(child, `${location}.children[${index}]`, errors)
       );
       return;
 
     case "for":
+      if (block.variable.trim() === "") {
+        errors.push(`${location}.variable: Loop variable cannot be empty.`);
+      }
       collectExpressionErrors(block.start, `${location}.start`, errors);
       collectExpressionErrors(block.end, `${location}.end`, errors);
       block.children.forEach((child, index) =>
@@ -1344,8 +2103,17 @@ function collectBlockErrors(block: Block, location: string, errors: string[]) {
       return;
 
     case "tryCatch":
+      if (block.catchErrorName.trim() === "") {
+        errors.push(
+          `${location}.catchErrorName: Error variable cannot be empty.`
+        );
+      }
       block.tryChildren.forEach((child, index) =>
-        collectBlockErrors(child, `${location}.tryChildren[${index}]`, errors)
+        collectBlockErrors(
+          child,
+          `${location}.tryChildren[${index}]`,
+          errors
+        )
       );
       block.catchChildren.forEach((child, index) =>
         collectBlockErrors(
@@ -1422,18 +2190,30 @@ function App() {
     setBlocks(updater);
   }
 
-  function updateBlockField(id: number, field: string, value: unknown) {
+  function updateBlockById(
+    id: number,
+    updater: (block: Block) => Block
+  ) {
     function update(blockList: Block[]): Block[] {
       return blockList.map((block) => {
-        if (block.id === id) {
-          return { ...block, [field]: value } as Block;
+        if (block.id === id) return updater(block);
+
+        if (block.type === "if") {
+          return {
+            ...block,
+            children: update(block.children),
+            elifBranches: block.elifBranches.map((branch) => ({
+              ...branch,
+              children: update(branch.children),
+            })),
+            elseChildren:
+              block.elseChildren === null
+                ? null
+                : update(block.elseChildren),
+          };
         }
 
-        if (
-          block.type === "if" ||
-          block.type === "while" ||
-          block.type === "for"
-        ) {
+        if (block.type === "while" || block.type === "for") {
           return { ...block, children: update(block.children) };
         }
 
@@ -1450,6 +2230,13 @@ function App() {
     }
 
     setCurrentBlocks((previous) => update(previous));
+  }
+
+  function updateBlockField(id: number, field: string, value: unknown) {
+    updateBlockById(
+      id,
+      (block) => ({ ...block, [field]: value }) as Block
+    );
   }
 
   function updateCurrentExpression(
@@ -1488,9 +2275,259 @@ function App() {
   }
 
 
+  function addCalculationOperand(id: number) {
+    updateCurrentExpression(id, (expression) => {
+      if (expression.type === "calculation") {
+        return createCalculationChainExpression(expression);
+      }
+
+      if (expression.type === "calculationChain") {
+        const operator =
+          expression.operations.at(-1)?.operator ?? "+";
+        return {
+          ...expression,
+          operations: [
+            ...expression.operations,
+            { operator, value: createAtomicExpression() },
+          ],
+        };
+      }
+
+      return expression;
+    });
+  }
+
+  function updateCalculationChainOperator(
+    id: number,
+    index: number,
+    operator: MathOperator
+  ) {
+    updateCurrentExpression(id, (expression) => {
+      if (expression.type !== "calculationChain") return expression;
+      return {
+        ...expression,
+        operations: expression.operations.map((operation, operationIndex) =>
+          operationIndex === index
+            ? { ...operation, operator }
+            : operation
+        ),
+      };
+    });
+  }
+
+  function removeCalculationOperand(id: number, index: number) {
+    updateCurrentExpression(id, (expression) => {
+      if (expression.type !== "calculationChain") return expression;
+
+      const operations = expression.operations.filter(
+        (_, operationIndex) => operationIndex !== index
+      );
+
+      if (operations.length === 1) {
+        return {
+          id: expression.id,
+          type: "calculation",
+          left: expression.first,
+          operator: operations[0].operator,
+          right: operations[0].value,
+        };
+      }
+
+      return { ...expression, operations };
+    });
+  }
+
+  function addComparisonOperand(id: number) {
+    updateCurrentExpression(id, (expression) => {
+      if (
+        expression.type === "logic" &&
+        expression.operator !== "and" &&
+        expression.operator !== "or"
+      ) {
+        return createComparisonChainExpression(expression);
+      }
+
+      if (expression.type === "comparisonChain") {
+        const operator =
+          expression.comparisons.at(-1)?.operator ?? "==";
+        return {
+          ...expression,
+          comparisons: [
+            ...expression.comparisons,
+            { operator, right: createAtomicExpression() },
+          ],
+        };
+      }
+
+      return expression;
+    });
+  }
+
+  function updateComparisonChainOperator(
+    id: number,
+    index: number,
+    operator: ComparisonOperator
+  ) {
+    updateCurrentExpression(id, (expression) => {
+      if (expression.type !== "comparisonChain") return expression;
+      return {
+        ...expression,
+        comparisons: expression.comparisons.map(
+          (comparison, comparisonIndex) =>
+            comparisonIndex === index
+              ? { ...comparison, operator }
+              : comparison
+        ),
+      };
+    });
+  }
+
+  function removeComparisonOperand(id: number, index: number) {
+    updateCurrentExpression(id, (expression) => {
+      if (expression.type !== "comparisonChain") return expression;
+
+      const comparisons = expression.comparisons.filter(
+        (_, comparisonIndex) => comparisonIndex !== index
+      );
+
+      if (comparisons.length === 1) {
+        return {
+          id: expression.id,
+          type: "logic",
+          left: expression.first,
+          operator: comparisons[0].operator,
+          right: comparisons[0].right,
+        };
+      }
+
+      return { ...expression, comparisons };
+    });
+  }
+
+  function expandVariableAssignment(blockId: number) {
+    updateBlockById(blockId, (block) => {
+      if (block.type !== "variable") return block;
+
+      return {
+        id: block.id,
+        type: "parallelAssign",
+        targets: [block.name, ""],
+        values: [block.value, createAtomicExpression()],
+      };
+    });
+  }
+
+  function updateParallelTarget(
+    blockId: number,
+    index: number,
+    value: string
+  ) {
+    updateBlockById(blockId, (block) => {
+      if (block.type !== "parallelAssign") return block;
+      return {
+        ...block,
+        targets: block.targets.map((target, targetIndex) =>
+          targetIndex === index
+            ? sanitizeIdentifierInput(value)
+            : target
+        ),
+      };
+    });
+  }
+
+  function addParallelPair(blockId: number) {
+    updateBlockById(blockId, (block) => {
+      if (block.type !== "parallelAssign") return block;
+      return {
+        ...block,
+        targets: [...block.targets, ""],
+        values: [...block.values, createAtomicExpression()],
+      };
+    });
+  }
+
+  function removeParallelPair(blockId: number, index: number) {
+    updateBlockById(blockId, (block) => {
+      if (block.type !== "parallelAssign" || index === 0) {
+        return block;
+      }
+
+      const targets = block.targets.filter(
+        (_, targetIndex) => targetIndex !== index
+      );
+
+      const values = block.values.filter(
+        (_, valueIndex) => valueIndex !== index
+      );
+
+      if (targets.length === 1) {
+        return {
+          id: block.id,
+          type: "variable",
+          name: targets[0],
+          value: values[0],
+        };
+      }
+
+      return {
+        ...block,
+        targets,
+        values,
+      };
+    });
+  }
+
+  function addElifBranch(blockId: number) {
+    updateBlockById(blockId, (block) => {
+      if (block.type !== "if") return block;
+      return {
+        ...block,
+        elifBranches: [
+          ...block.elifBranches,
+          {
+            id: makeId(),
+            condition: createConditionExpression(),
+            children: [],
+          },
+        ],
+      };
+    });
+  }
+
+  function removeElifBranch(blockId: number, branchId: number) {
+    updateBlockById(blockId, (block) => {
+      if (block.type !== "if") return block;
+      return {
+        ...block,
+        elifBranches: block.elifBranches.filter(
+          (branch) => branch.id !== branchId
+        ),
+      };
+    });
+  }
+
+  function addElseBranch(blockId: number) {
+    updateBlockById(blockId, (block) => {
+      if (block.type !== "if" || block.elseChildren !== null) return block;
+      return { ...block, elseChildren: [] };
+    });
+  }
+
+  function removeElseBranch(blockId: number) {
+    updateBlockById(blockId, (block) => {
+      if (block.type !== "if") return block;
+      return { ...block, elseChildren: null };
+    });
+  }
+
   function getDropTargetKey(target: DropTarget) {
     if (target.area === "root") return `root-${target.index}`;
-    if (target.area === "expression") return `expression-${target.expressionId}`;
+    if (target.area === "expression") {
+      return `expression-${target.expressionId}`;
+    }
+    if (target.area === "elifChildren") {
+      return `${target.area}-${target.parentId}-${target.branchId}-${target.index}`;
+    }
     return `${target.area}-${target.parentId}-${target.index}`;
   }
 
@@ -1941,16 +2978,37 @@ function App() {
     );
   }
 
+  function makeListTarget(
+    area: ListArea,
+    index: number,
+    parentId?: number,
+    branchId?: number
+  ): ListDropTarget {
+    if (area === "root") return { area: "root", index };
+    if (area === "elifChildren") {
+      return {
+        area,
+        parentId: parentId as number,
+        branchId: branchId as number,
+        index,
+      };
+    }
+    return { area, parentId: parentId as number, index };
+  }
+
   function renderNestedArea(
     blockList: Block[],
-    area: "children" | "tryChildren" | "catchChildren",
-    parentId: number
+    area: Exclude<ListArea, "root">,
+    parentId: number,
+    branchId?: number,
+    placeholder = "Drop statement blocks here"
   ) {
-    const endTarget: ListDropTarget = {
+    const endTarget = makeListTarget(
       area,
+      blockList.length,
       parentId,
-      index: blockList.length,
-    };
+      branchId
+    );
 
     return (
       <div
@@ -1959,13 +3017,15 @@ function App() {
             ? "active-nested-area"
             : ""
         }`}
-        onDragOver={(event) => handleDropZoneDragOver(event, endTarget)}
+        onDragOver={(event) =>
+          handleDropZoneDragOver(event, endTarget)
+        }
         onDrop={(event) => handleDrop(event, endTarget)}
       >
         {blockList.length === 0 && (
-          <div className="nested-placeholder">Drop statement blocks here</div>
+          <div className="nested-placeholder">{placeholder}</div>
         )}
-        {renderBlockList(blockList, area, parentId)}
+        {renderBlockList(blockList, area, parentId, branchId)}
       </div>
     );
   }
@@ -1974,27 +3034,26 @@ function App() {
     event: DragEvent<HTMLDivElement>,
     area: ListArea,
     index: number,
-    parentId?: number
+    parentId?: number,
+    branchId?: number
   ): ListDropTarget {
     const rect = event.currentTarget.getBoundingClientRect();
     const targetIndex =
       event.clientY < rect.top + rect.height / 2 ? index : index + 1;
 
-    if (area === "root") return { area: "root", index: targetIndex };
-    return { area, parentId: parentId as number, index: targetIndex };
+    return makeListTarget(area, targetIndex, parentId, branchId);
   }
 
   function renderBlockList(
     blockList: Block[],
     area: ListArea,
-    parentId?: number
+    parentId?: number,
+    branchId?: number
   ) {
     return (
       <>
         {renderDropZone(
-          area === "root"
-            ? { area: "root", index: 0 }
-            : { area, parentId: parentId as number, index: 0 }
+          makeListTarget(area, 0, parentId, branchId)
         )}
 
         {blockList.map((block, index) => (
@@ -2002,23 +3061,34 @@ function App() {
             key={block.id}
             className="block-wrapper"
             onDragOver={(event) => {
-              const target = getBlockHoverTarget(event, area, index, parentId);
+              const target = getBlockHoverTarget(
+                event,
+                area,
+                index,
+                parentId,
+                branchId
+              );
               handleDropZoneDragOver(event, target);
             }}
             onDrop={(event) => {
-              const target = getBlockHoverTarget(event, area, index, parentId);
+              const target = getBlockHoverTarget(
+                event,
+                area,
+                index,
+                parentId,
+                branchId
+              );
               handleDrop(event, target);
             }}
           >
             {renderBlock(block)}
             {renderDropZone(
-              area === "root"
-                ? { area: "root", index: index + 1 }
-                : {
-                    area,
-                    parentId: parentId as number,
-                    index: index + 1,
-                  }
+              makeListTarget(
+                area,
+                index + 1,
+                parentId,
+                branchId
+              )
             )}
           </div>
         ))}
@@ -2110,34 +3180,122 @@ function App() {
     );
   }
 
-  function renderCalculationContent(expression: CalculationExpression) {
+  function renderMathOperatorOptions() {
     return (
-      <div className="expression-content-row">
-        {renderExpressionSlot(expression.left, "value")}
-        <select
-          value={expression.operator}
-          onChange={(event) =>
-            updateExpressionField(
-              expression.id,
-              "operator",
-              event.target.value as MathOperator
-            )
-          }
+      <>
+        <option value="+">+</option>
+        <option value="-">−</option>
+        <option value="*">×</option>
+        <option value="/">÷</option>
+        <option value="%">%</option>
+      </>
+    );
+  }
+
+  function renderComparisonOperatorOptions() {
+    return (
+      <>
+        <option value="==">==</option>
+        <option value="!=">!=</option>
+        <option value=">">&gt;</option>
+        <option value="<">&lt;</option>
+        <option value=">=">&gt;=</option>
+        <option value="<=">&lt;=</option>
+      </>
+    );
+  }
+
+  function renderCalculationContent(
+    expression: CalculationExpression | CalculationChainExpression
+  ) {
+    if (expression.type === "calculation") {
+      return (
+        <div className="expression-content-row chain-expression-row">
+          {renderExpressionSlot(expression.left, "value")}
+          <select
+            value={expression.operator}
+            onChange={(event) =>
+              updateExpressionField(
+                expression.id,
+                "operator",
+                event.target.value as MathOperator
+              )
+            }
+          >
+            {renderMathOperatorOptions()}
+          </select>
+          {renderExpressionSlot(expression.right, "value")}
+          <button
+            className="expand-expression-button"
+            title="Add another calculation value"
+            onClick={(event) => {
+              event.stopPropagation();
+              addCalculationOperand(expression.id);
+            }}
+          >
+            +
+          </button>
+        </div>
+      );
+    }
+
+    return (
+      <div className="expression-content-row chain-expression-row">
+        {renderExpressionSlot(expression.first, "value")}
+
+        {expression.operations.map((operation, index) => (
+          <div
+            className="chain-segment"
+            key={operation.value.id}
+          >
+            <select
+              value={operation.operator}
+              onChange={(event) =>
+                updateCalculationChainOperator(
+                  expression.id,
+                  index,
+                  event.target.value as MathOperator
+                )
+              }
+            >
+              {renderMathOperatorOptions()}
+            </select>
+
+            {renderExpressionSlot(operation.value, "value")}
+
+            <button
+              className="remove-chain-button"
+              title="Remove this calculation value"
+              onClick={(event) => {
+                event.stopPropagation();
+                removeCalculationOperand(expression.id, index);
+              }}
+            >
+              ×
+            </button>
+          </div>
+        ))}
+
+        <button
+          className="expand-expression-button"
+          title="Add another calculation value"
+          onClick={(event) => {
+            event.stopPropagation();
+            addCalculationOperand(expression.id);
+          }}
         >
-          <option value="+">+</option>
-          <option value="-">−</option>
-          <option value="*">×</option>
-          <option value="/">÷</option>
-          <option value="%">%</option>
-        </select>
-        {renderExpressionSlot(expression.right, "value")}
+          +
+        </button>
       </div>
     );
   }
 
   function renderLogicContent(expression: LogicExpression) {
+    const canExpand =
+      expression.operator !== "and" && expression.operator !== "or";
+
     return (
-      <div className="expression-content-row">
+      <div className="expression-content-row chain-expression-row">
         {renderExpressionSlot(expression.left, "value")}
         <select
           value={expression.operator}
@@ -2149,16 +3307,78 @@ function App() {
             )
           }
         >
-          <option value="==">==</option>
-          <option value="!=">!=</option>
-          <option value=">">&gt;</option>
-          <option value="<">&lt;</option>
-          <option value=">=">&gt;=</option>
-          <option value="<=">&lt;=</option>
+          {renderComparisonOperatorOptions()}
           <option value="and">and</option>
           <option value="or">or</option>
         </select>
         {renderExpressionSlot(expression.right, "value")}
+
+        {canExpand && (
+          <button
+            className="expand-expression-button"
+            title="Add another comparison"
+            onClick={(event) => {
+              event.stopPropagation();
+              addComparisonOperand(expression.id);
+            }}
+          >
+            +
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  function renderComparisonChainContent(
+    expression: ComparisonChainExpression
+  ) {
+    return (
+      <div className="expression-content-row chain-expression-row">
+        {renderExpressionSlot(expression.first, "value")}
+
+        {expression.comparisons.map((comparison, index) => (
+          <div
+            className="chain-segment"
+            key={comparison.right.id}
+          >
+            <select
+              value={comparison.operator}
+              onChange={(event) =>
+                updateComparisonChainOperator(
+                  expression.id,
+                  index,
+                  event.target.value as ComparisonOperator
+                )
+              }
+            >
+              {renderComparisonOperatorOptions()}
+            </select>
+
+            {renderExpressionSlot(comparison.right, "value")}
+
+            <button
+              className="remove-chain-button"
+              title="Remove this comparison"
+              onClick={(event) => {
+                event.stopPropagation();
+                removeComparisonOperand(expression.id, index);
+              }}
+            >
+              ×
+            </button>
+          </div>
+        ))}
+
+        <button
+          className="expand-expression-button"
+          title="Add another comparison"
+          onClick={(event) => {
+            event.stopPropagation();
+            addComparisonOperand(expression.id);
+          }}
+        >
+          +
+        </button>
       </div>
     );
   }
@@ -2193,9 +3413,11 @@ function App() {
 
   function renderNestedExpression(expression: ExpressionStatementBlock) {
     const expressionClass =
-      expression.type === "calculation"
+      expression.type === "calculation" ||
+      expression.type === "calculationChain"
         ? "calculation-expression"
-        : expression.type === "logic"
+        : expression.type === "logic" ||
+            expression.type === "comparisonChain"
           ? "logic-expression"
           : "call-expression";
 
@@ -2211,9 +3433,13 @@ function App() {
         <span className="expression-grip" title="Drag nested expression">
           ⋮⋮
         </span>
-        {expression.type === "calculation" &&
+        {(expression.type === "calculation" ||
+          expression.type === "calculationChain") &&
           renderCalculationContent(expression)}
-        {expression.type === "logic" && renderLogicContent(expression)}
+        {expression.type === "logic" &&
+          renderLogicContent(expression)}
+        {expression.type === "comparisonChain" &&
+          renderComparisonChainContent(expression)}
         {expression.type === "call" && renderCallContent(expression)}
       </div>
     );
@@ -2235,10 +3461,15 @@ function App() {
           isContainerBlock(block) ? "container-block" : ""
         }`}
         draggable
-        onDragStart={(event) => handleWorkspaceBlockDragStart(event, block.id)}
+        onDragStart={(event) =>
+          handleWorkspaceBlockDragStart(event, block.id)
+        }
         onDragEnd={handleDragEnd}
       >
-        <button className="delete-button" onClick={() => deleteBlock(block.id)}>
+        <button
+          className="delete-button"
+          onClick={() => deleteBlock(block.id)}
+        >
           ×
         </button>
 
@@ -2266,10 +3497,99 @@ function App() {
               70,
               180
             )}
+            <button
+              className="expand-expression-button"
+              title="Add another variable and value"
+              onClick={(event) => {
+                event.stopPropagation();
+                expandVariableAssignment(block.id);
+              }}
+            >
+              +
+            </button>
           </div>
         )}
 
-        {block.type === "calculation" && (
+        {block.type === "parallelAssign" && (
+          <div className="block-row expression-enabled-row parallel-assignment-row">
+            <div className="parallel-side parallel-targets">
+              {block.targets.map((target, index) => (
+                <div
+                  className="parallel-item"
+                  key={`target-${index}`}
+                >
+                  <input
+                    placeholder={`name ${index + 1}`}
+                    value={target}
+                    style={{
+                      width: getInputWidth(target, 68, 130),
+                    }}
+                    onChange={(event) =>
+                      updateParallelTarget(
+                        block.id,
+                        index,
+                        event.target.value
+                      )
+                    }
+                  />
+                  {index < block.targets.length - 1 && (
+                    <span>,</span>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <span>=</span>
+
+            <div className="parallel-side parallel-values">
+              {block.values.map((value, index) => (
+                <div
+                  className="parallel-item"
+                  key={value.id}
+                >
+                  {renderExpressionSlot(
+                    value,
+                    `value ${index + 1}`,
+                    "parallel-value-slot",
+                    72,
+                    170
+                  )}
+
+                  {block.targets.length > 2 && (
+                    <button
+                      className="remove-chain-button"
+                      title="Remove this assignment pair"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        removeParallelPair(block.id, index);
+                      }}
+                    >
+                      ×
+                    </button>
+                  )}
+
+                  {index < block.values.length - 1 && (
+                    <span>,</span>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <button
+              className="expand-expression-button"
+              title="Add another variable and value"
+              onClick={(event) => {
+                event.stopPropagation();
+                addParallelPair(block.id);
+              }}
+            >
+              +
+            </button>
+          </div>
+        )}
+
+        {(block.type === "calculation" ||
+          block.type === "calculationChain") && (
           <div className="block-row expression-enabled-row">
             {renderCalculationContent(block)}
           </div>
@@ -2278,6 +3598,12 @@ function App() {
         {block.type === "logic" && (
           <div className="block-row expression-enabled-row">
             {renderLogicContent(block)}
+          </div>
+        )}
+
+        {block.type === "comparisonChain" && (
+          <div className="block-row expression-enabled-row">
+            {renderComparisonChainContent(block)}
           </div>
         )}
 
@@ -2326,7 +3652,97 @@ function App() {
                 { showBadge: false, condition: true }
               )}
             </div>
-            {renderNestedArea(block.children, "children", block.id)}
+
+            {renderNestedArea(
+              block.children,
+              "children",
+              block.id,
+              undefined,
+              "Drop blocks for the if branch"
+            )}
+
+            {block.elifBranches.map((branch, index) => (
+              <div className="conditional-branch" key={branch.id}>
+                <div className="branch-header-row">
+                  <span>elif</span>
+                  {renderExpressionSlot(
+                    branch.condition,
+                    "condition",
+                    "condition-expression-slot",
+                    110,
+                    260,
+                    { showBadge: false, condition: true }
+                  )}
+                  <button
+                    className="remove-branch-button"
+                    title={`Remove elif ${index + 1}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      removeElifBranch(block.id, branch.id);
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+
+                {renderNestedArea(
+                  branch.children,
+                  "elifChildren",
+                  block.id,
+                  branch.id,
+                  `Drop blocks for elif ${index + 1}`
+                )}
+              </div>
+            ))}
+
+            {block.elseChildren !== null && (
+              <div className="conditional-branch">
+                <div className="branch-header-row">
+                  <span>else</span>
+                  <button
+                    className="remove-branch-button"
+                    title="Remove else branch"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      removeElseBranch(block.id);
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+
+                {renderNestedArea(
+                  block.elseChildren,
+                  "elseChildren",
+                  block.id,
+                  undefined,
+                  "Drop blocks for the else branch"
+                )}
+              </div>
+            )}
+            {block.elseChildren === null && (
+              <div className="if-branch-controls">
+                <button
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    addElifBranch(block.id);
+                  }}
+                >
+                  + elif
+                </button>
+
+                {block.elseChildren === null && (
+                  <button
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      addElseBranch(block.id);
+                    }}
+                  >
+                    + else
+                  </button>
+                )}
+              </div>
+            )}
           </>
         )}
 
@@ -2364,9 +3780,17 @@ function App() {
                 }
               />
               <span>from</span>
-              {renderExpressionSlot(block.start, "0", "compact-expression-slot")}
+              {renderExpressionSlot(
+                block.start,
+                "0",
+                "compact-expression-slot"
+              )}
               <span>to</span>
-              {renderExpressionSlot(block.end, "10", "compact-expression-slot")}
+              {renderExpressionSlot(
+                block.end,
+                "10",
+                "compact-expression-slot"
+              )}
             </div>
             {renderNestedArea(block.children, "children", block.id)}
           </>
@@ -2377,14 +3801,20 @@ function App() {
             <div className="block-row">
               <span>try</span>
             </div>
-            {renderNestedArea(block.tryChildren, "tryChildren", block.id)}
+            {renderNestedArea(
+              block.tryChildren,
+              "tryChildren",
+              block.id
+            )}
 
             <div className="catch-row">
               <span>catch</span>
               <input
                 placeholder="error"
                 value={block.catchErrorName}
-                style={{ width: getInputWidth(block.catchErrorName) }}
+                style={{
+                  width: getInputWidth(block.catchErrorName),
+                }}
                 onChange={(event) =>
                   updateBlockField(
                     block.id,
@@ -2394,7 +3824,11 @@ function App() {
                 }
               />
             </div>
-            {renderNestedArea(block.catchChildren, "catchChildren", block.id)}
+            {renderNestedArea(
+              block.catchChildren,
+              "catchChildren",
+              block.id
+            )}
           </>
         )}
       </div>
