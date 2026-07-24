@@ -81,6 +81,26 @@ function toExpr(block) {
         case 'calculation':
             return new BinaryOperator(toExpr(block.left), block.operator, toExpr(block.right));
 
+        // #22: the frontend flattens a run of maths into ONE node when the user
+        // adds a third operand: { first, operations:[{operator, value}, ...] }.
+        // The row carries no grouping, so it is rebuilt with Python's precedence
+        // — 2 + 3 * 4 is 14 here, exactly as the free-form parser would read it.
+        case 'calculationChain':
+            return foldCalculationChain(toExpr(block.first), block.operations);
+
+        // #23: the comparison counterpart, { first, comparisons:[{operator, right}] }.
+        // Compare already implements Python's chaining, so 1 < 2 < 3 is
+        // (1 < 2) and (2 < 3) rather than (1 < 2) < 3.
+        case 'comparisonChain': {
+            if (!Array.isArray(block.comparisons) || block.comparisons.length === 0) {
+                throw new ValueError('comparisonChain requires a "comparisons" array');
+            }
+            return new Compare(
+                toExpr(block.first),
+                block.comparisons.map(c => [c.operator ?? c.op, toExpr(c.right)])
+            );
+        }
+
         // #6: the frontend collapses comparisons AND boolean ops into 'logic'
         case 'logic': {
             const op = block.operator;
@@ -94,7 +114,7 @@ function toExpr(block) {
             // Chained: { left, comparisons: [{op, right}, ...] }
             // Simple:  { left, operator, right }
             return block.comparisons
-                ? new Compare(toExpr(block.left), block.comparisons.map(c => [c.op, toExpr(c.right)]))
+                ? new Compare(toExpr(block.left), block.comparisons.map(c => [c.op ?? c.operator, toExpr(c.right)]))
                 : new Compare(toExpr(block.left), [[block.operator, toExpr(block.right)]]);
 
         case 'boolop': {
@@ -124,6 +144,47 @@ function toExpr(block) {
             if (block.dataType !== undefined) return literalExpr(block.dataType, block.value);
             throw new Error(`Unknown expression block: "${block.type}"`);
     }
+}
+
+// #22 (continued): the frontend's operator palette is + - * / % — all
+// left-associative, none right-associative, so a single precedence table and a
+// left-to-right reduction reproduce Python exactly. `**` is deliberately absent:
+// no block can emit it, and folding it left-associatively would be WRONG
+// (2 ** 3 ** 2 is 512 in Python, not 64). If a power block is ever added, it
+// needs its own right-associative branch rather than a row in this table.
+const CHAIN_PRECEDENCE = { '+': 1, '-': 1, '*': 2, '/': 2, '%': 2 };
+
+function foldCalculationChain(firstExpr, operations) {
+    if (!Array.isArray(operations) || operations.length === 0) {
+        throw new ValueError('calculationChain requires an "operations" array');
+    }
+
+    const operands  = [firstExpr];
+    const operators = [];
+
+    const reduceTop = () => {
+        const op    = operators.pop();
+        const right = operands.pop();
+        const left  = operands.pop();
+        operands.push(new BinaryOperator(left, op, right));
+    };
+
+    for (const operation of operations) {
+        const op = operation?.operator;
+        if (!Object.hasOwn(CHAIN_PRECEDENCE, op)) {
+            throw new ValueError(`Unknown operator in calculation chain: "${op}"`);
+        }
+        // Left-associative: anything already stacked that binds at least as
+        // tightly gets closed off before this operator is pushed.
+        while (operators.length && CHAIN_PRECEDENCE[operators[operators.length - 1]] >= CHAIN_PRECEDENCE[op]) {
+            reduceTop();
+        }
+        operators.push(op);
+        operands.push(toExpr(operation.value));
+    }
+
+    while (operators.length) reduceTop();
+    return operands[0];
 }
 
 // For statement slots where dataType may sit BESIDE value rather than wrapping it,
@@ -167,19 +228,67 @@ function makeToStmt(output) {
             case 'assign':
                 return new Assign(block.name, valueExpr(block));
 
-            case 'parallelAssign':
-                return new ParallelAssign(block.names, block.values.map(toExpr));
+            // #24: the frontend's field is `targets` — `names` was the older
+            // backend spelling and is still accepted. Reading only `names` meant
+            // every parallel assignment from the UI arrived with undefined
+            // targets and died inside ParallelAssign.evaluate.
+            case 'parallelAssign': {
+                const targets = pick(block.targets, block.names);
+                const values  = pick(block.values);
+
+                if (targets.length === 0) {
+                    throw new ValueError('Parallel assignment needs at least one target');
+                }
+                for (const target of targets) {
+                    if (typeof target !== 'string' || target.trim() === '') {
+                        throw new ValueError('Parallel assignment target name cannot be empty');
+                    }
+                }
+                // A target/value count mismatch is left to ParallelAssign.evaluate,
+                // which reports it with Python's unpacking wording.
+                return new ParallelAssign(targets, values.map(toExpr));
+            }
 
             case 'print':
                 return new Print(valueExpr(block), output);
 
-            case 'if':
-                // elseChildren is read if the frontend ever adds one; empty until then.
+            // #25: Python has no elif node — `elif c: B` is just an `if` sitting
+            // alone in the previous branch's else. The frontend sends a FLAT
+            // elifBranches array, so the chain is rebuilt from the tail backwards:
+            // the real else is the innermost orelse, and each earlier branch wraps
+            // everything that follows it.
+            //
+            //   if a / elif b / elif c / else d
+            //     -> If(a, .., [If(b, .., [If(c, .., d)])])
+            //
+            // Only one branch can run, and a condition is evaluated only once the
+            // ones above it have all been false — which is what makes
+            // `if x != 0 / elif 10 / x > 2` safe.
+            case 'if': {
+                const branches = Array.isArray(block.elifBranches) ? block.elifBranches : [];
+
+                // elseChildren is null when the user never opened an else block.
+                // pick() reads that as "no statements", which is the same thing.
+                let orelse = pick(block.elseChildren, block.elseBody).map(toStmt);
+
+                for (let i = branches.length - 1; i >= 0; i--) {
+                    const branch = branches[i];
+                    if (!branch || typeof branch !== 'object') {
+                        throw new Error('Invalid elif branch');
+                    }
+                    orelse = [new If(
+                        toExpr(branch.condition),
+                        pick(branch.children, branch.body).map(toStmt),
+                        orelse
+                    )];
+                }
+
                 return new If(
                     toExpr(block.condition),
                     pick(block.children, block.body).map(toStmt),
-                    pick(block.elseChildren, block.elseBody).map(toStmt)
+                    orelse
                 );
+            }
 
             case 'while':
                 return new While(
@@ -219,9 +328,14 @@ function makeToStmt(output) {
             case 'return':
                 return new Return(toExpr(block.value));
 
-            // #14: bare expressions used as statements (a call for its side effects)
+            // #14: bare expressions used as statements (a call for its side effects).
+            // The chain forms belong here too — serializeBlock in the frontend
+            // drops an expression statement in verbatim, so a chain can arrive
+            // in a statement slot just like a plain calculation.
             case 'calculation':
+            case 'calculationChain':
             case 'logic':
+            case 'comparisonChain':
             case 'call':
                 return new ExpressionStatement(toExpr(block));
 

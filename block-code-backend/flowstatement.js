@@ -1,16 +1,21 @@
 // function.js imports nothing, so this direction is safe — no circular require.
 const { ReturnSignal } = require('./function');
+// errors.js imports nothing either.
+const { ValueError } = require('./errors');
 
 class Statement {
     evaluate() {}
 }
 
 class If extends Statement {
-    constructor(test, body, orelse) {
+    // orelse holds the else statements. An elif chain reaches this class as a
+    // single nested If inside orelse (see #25 in interpreter.js) — there is no
+    // separate elif node, exactly as in Python's AST.
+    constructor(test, body, orelse = []) {
         super();
         this.test = test;
         this.body = body;
-        this.orelse = orelse;
+        this.orelse = orelse ?? [];
     }
     evaluate(env) {
         if (this.test.evaluate(env)) {
@@ -44,9 +49,18 @@ class ParallelAssign extends Statement {
     }
     evaluate(env) {
         if (this.targets.length !== this.values.length) {
-            throw new TypeError("Targets and values must be same length");
+            // Python's own wording, and a ValueError rather than a TypeError —
+            // `a, b = 1, 2, 3` raises ValueError there too. errorType reaches the
+            // frontend, so the category is worth getting right.
+            throw new ValueError(
+                this.values.length > this.targets.length
+                    ? `too many values to unpack (expected ${this.targets.length})`
+                    : `not enough values to unpack (expected ${this.targets.length}, got ${this.values.length})`
+            );
         }
-        // #20: no Object.prototype keys leaking into the staging object
+        // #20: no Object.prototype keys leaking into the staging object.
+        // Staging also makes the assignment simultaneous: `a, b = b, a` swaps,
+        // because every right-hand side is evaluated against the OLD env.
         const temp = Object.create(null);
         for (let i = 0; i < this.values.length; i++) {
             temp[this.targets[i]] = this.values[i].evaluate(env);
