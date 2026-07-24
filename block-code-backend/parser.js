@@ -2,6 +2,9 @@ const { BinaryOperator, Compare } = require('./operations');
 const { num, Booleans, Strings } = require('./permitivedatatypes');
 // function.js requires nothing, so this direction adds no cycle.
 const { Call } = require('./function');
+const { NameError, typeName } = require('./errors');
+// B4: structural parse failures below use JS's native SyntaxError, whose
+// `.name` already matches Python's exception name.
 
 function tokenize(input) {
     const s = String(input);
@@ -20,7 +23,7 @@ function tokenize(input) {
             i++;
             let str = '';
             while (i < s.length && s[i] !== quote) str += s[i++];
-            if (i >= s.length) throw new Error(`Unterminated string in expression: ${s}`);
+            if (i >= s.length) throw new SyntaxError(`Unterminated string in expression: ${s}`);
             i++;
             tokens.push({ type: 'string', value: str });
             continue;
@@ -51,7 +54,7 @@ function tokenize(input) {
         if (c === ')') { tokens.push({ type: 'rparen' }); i++; continue; }
         if ('+-*/%<>'.includes(c)) { tokens.push({ type: 'op', value: c }); i++; continue; }
 
-        throw new Error(`Unexpected character '${c}' in expression: ${s}`);
+        throw new SyntaxError(`Unexpected character '${c}' in expression: ${s}`);
     }
 
     tokens.push({ type: 'eof' });
@@ -63,7 +66,7 @@ function parse(input) {
     let pos = 0;
     const peek = () => tokens[pos];
     const next = () => tokens[pos++];
-    const expect = type => { const t = next(); if (t.type !== type) throw new Error(`Expected ${type} in expression: ${input}`); return t; };
+    const expect = type => { const t = next(); if (t.type !== type) throw new SyntaxError(`Expected ${type} in expression: ${input}`); return t; };
 
     function parseExpr() { return parseOr(); }
 
@@ -110,7 +113,18 @@ function parse(input) {
     // So parseUnary sits ABOVE parsePower, and parsePower takes parseUnary on
     // its right (keeps 2 ** -1 working) which also gives right-associativity.
     function parseUnary() {
-        if (peek().type === 'op' && peek().value === '-') { next(); const operand = parseUnary(); return { evaluate: env => -operand.evaluate(env) }; }
+        if (peek().type === 'op' && peek().value === '-') {
+            next();
+            const operand = parseUnary();
+            // B4: -'abc' used to evaluate to NaN instead of raising.
+            return { evaluate: env => {
+                const v = operand.evaluate(env);
+                if (typeof v !== 'number' && typeof v !== 'boolean') {
+                    throw new TypeError(`bad operand type for unary -: '${typeName(v)}'`);
+                }
+                return -v;
+            } };
+        }
         if (peek().type === 'op' && peek().value === '+') { next(); return parseUnary(); }
         return parsePower();
     }
@@ -143,14 +157,14 @@ function parse(input) {
 
             // #20: hasOwn, not `in` — `in` walks the prototype chain, so a bare
             // `constructor` or `toString` would resolve as a defined variable.
-            return { evaluate: env => { if (!Object.hasOwn(env, name)) throw new Error(`Undefined variable: ${name}`); return env[name]; } };
+            return { evaluate: env => { if (!Object.hasOwn(env, name)) throw new NameError(`name '${name}' is not defined`); return env[name]; } };
         }
         if (t.type === 'lparen') { next(); const e = parseExpr(); expect('rparen'); return e; }
-        throw new Error(`Unexpected token in expression: ${input}`);
+        throw new SyntaxError(`Unexpected token in expression: ${input}`);
     }
 
     const result = parseExpr();
-    if (peek().type !== 'eof') throw new Error(`Unexpected trailing input in expression: ${input}`);
+    if (peek().type !== 'eof') throw new SyntaxError(`Unexpected trailing input in expression: ${input}`);
     return result;
 }
 

@@ -1,3 +1,7 @@
+// B4: NameError / typeName come from errors.js, which imports nothing —
+// function.js stays dependency-light and free of circular requires.
+const { NameError, typeName } = require('./errors');
+
 // Signal thrown to unwind out of a function body when `return` runs.
 // It is NOT an Error, so try/catch blocks must re-throw it (see flowstatement TaC).
 class ReturnSignal {
@@ -18,7 +22,8 @@ class UserFunction {
 
     call(argValues) {
         if (argValues.length !== this.params.length) {
-            throw new Error(`Function ${this.name} expects ${this.params.length} argument(s), got ${argValues.length}`);
+            // B4: Python raises TypeError for an arity mismatch, not a bare Error.
+            throw new TypeError(`Function ${this.name} expects ${this.params.length} argument(s), got ${argValues.length}`);
         }
 
         // Fresh local scope. Seed it with the other registered functions
@@ -62,8 +67,13 @@ class Call {
     }
     evaluate(env) {
         const fn = Object.hasOwn(env, this.name) ? env[this.name] : undefined;   // #20
+        // B4: Python separates these two failures. An unknown name is a
+        // NameError; a name that exists but isn't callable is a TypeError.
+        if (fn === undefined) {
+            throw new NameError(`Undefined function: name '${this.name}' is not defined`);
+        }
         if (!(fn instanceof UserFunction)) {
-            throw new Error(`Undefined function: ${this.name}`);
+            throw new TypeError(`'${typeName(fn)}' object is not callable`);
         }
         const argValues = this.args.map(a => a.evaluate(env));
         return fn.call(argValues);

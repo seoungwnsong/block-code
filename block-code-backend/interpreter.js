@@ -5,6 +5,7 @@ const { BinaryOperator, Compare, BoolOp } = require('./operations');
 const { num, Booleans, Strings } = require('./permitivedatatypes');
 const { parse } = require('./parser');
 const { UserFunction, Return, Call } = require('./function');   // #11, #12, #13
+const { NameError, ValueError } = require('./errors');          // B4
 
 // ---------------------------------------------------------------------------
 // Literals
@@ -17,7 +18,8 @@ function literalExpr(dataType, value) {
         case 'int':
         case 'float': {
             const n = Number(value);
-            if (Number.isNaN(n)) throw new Error(`Invalid ${dataType} literal: ${value}`);
+            // B4: Python's int('abc') raises ValueError, not a bare Error.
+            if (Number.isNaN(n)) throw new ValueError(`Invalid ${dataType} literal: ${value}`);
             return new num(n);
         }
         case 'bool':
@@ -65,7 +67,7 @@ function toExpr(block) {
         case 'variableReference':
         case 'variable':
             return { evaluate: (env) => {
-                if (!Object.hasOwn(env, block.name)) throw new Error(`Undefined variable: ${block.name}`);   // #20
+                if (!Object.hasOwn(env, block.name)) throw new NameError(`name '${block.name}' is not defined`);   // #20, B4
                 return env[block.name];
             }};
 
@@ -98,16 +100,16 @@ function toExpr(block) {
         case 'boolop': {
             const op = block.operator;
             if (op !== 'and' && op !== 'or') {
-                throw new Error(`boolop operator must be "and" or "or", got: "${op}"`);
+                throw new ValueError(`boolop operator must be "and" or "or", got: "${op}"`);
             }
             if (!Array.isArray(block.values) || block.values.length < 2) {
-                throw new Error('boolop requires a "values" array of at least 2 expressions');
+                throw new ValueError('boolop requires a "values" array of at least 2 expressions');
             }
             return new BoolOp(op, block.values.map(toExpr));
         }
 
         case 'not': {
-            if (block.value === undefined) throw new Error('not block requires a "value"');
+            if (block.value === undefined) throw new ValueError('not block requires a "value"');
             const operand = toExpr(block.value);
             return { evaluate: (env) => !operand.evaluate(env) };
         }
@@ -252,6 +254,13 @@ function runProgram(program) {
 
     // #13: register EVERY function before executing anything, so call order is
     // free and recursion / mutual recursion resolve.
+    // B4: Python stops at the first uncaught error. `halted` is set as soon as
+    // one is reported, and nothing after it runs — so `x = 1/0` followed by
+    // `print(x)` yields ONE error, not two. Note this means results.length can
+    // now be shorter than the number of blocks sent: a block with no entry was
+    // never reached.
+    let halted = false;
+
     for (const def of defs) {
         try {
             env[def.name] = new UserFunction(
@@ -261,19 +270,26 @@ function runProgram(program) {
             );
             results.push({ id: def.id, status: 'ok' });
         } catch (err) {
-            results.push({ id: def.id, status: 'error', message: err.message });
+            // A def that won't even build is a definition-time failure —
+            // Python would never reach the program body either.
+            results.push({ id: def.id, status: 'error', errorType: err.name || 'Error', message: err.message });
+            halted = true;
+            break;
         }
     }
     for (const value of Object.values(env)) {
         if (value instanceof UserFunction) value.globalEnv = env;
     }
 
-    for (const block of blocks) {
-        try {
-            toStmt(block).evaluate(env);
-            results.push({ id: block.id, status: 'ok' });
-        } catch (err) {
-            results.push({ id: block.id, status: 'error', message: err.message });
+    if (!halted) {
+        for (const block of blocks) {
+            try {
+                toStmt(block).evaluate(env);
+                results.push({ id: block.id, status: 'ok' });
+            } catch (err) {
+                results.push({ id: block.id, status: 'error', errorType: err.name || 'Error', message: err.message });
+                break;   // B4: stop the program, don't run the remaining blocks
+            }
         }
     }
 
